@@ -68,7 +68,8 @@ is_popup_event(#mousebutton{button=3,x=X0,y=Y0,state=State,mod=Mod}) ->
     case State of
 	?SDL_RELEASED ->
 	    {yes,X,Y,Mod};
-	_Other -> no
+	?SDL_PRESSED ->
+	    {pre,X,Y,Mod}
     end;
 is_popup_event(_Event) -> no.
 
@@ -348,12 +349,13 @@ mousemotion(X, Y, Mi0) ->
     Mi = set_submenu_timer(Mi1, Mi0, X, Y),
     get_menu_event(Mi).
 
-button_pressed(#mousebutton{button=B,x=X,y=Y,state=?SDL_RELEASED},
-	       #mi{type=plain}=Mi) when B =< 3 ->
-    wings_wm:dirty(),
-    button_pressed(1, 0, X, Y, Mi);
+%button_pressed(#mousebutton{button=B,x=X,y=Y,state=?SDL_RELEASED},
+%	       #mi{type=plain}=Mi) when B =< 3 ->
+%    wings_wm:dirty(),
+%    button_pressed(1, 0, X, Y, Mi);
 button_pressed(#mousebutton{button=B,x=X,y=Y,mod=Mod,state=?SDL_RELEASED},
-	       #mi{type=popup}=Mi) when B =< 3 ->
+	       %#mi{type=popup}=
+	       Mi) when B =< 3 ->
     wings_wm:dirty(),
     button_pressed(B, Mod, X, Y, Mi);
 button_pressed(_, _) -> keep.

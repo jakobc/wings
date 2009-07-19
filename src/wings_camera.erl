@@ -278,18 +278,18 @@ nendo_event(#mousebutton{button=1,state=?SDL_RELEASED}, Camera, _, _) ->
 nendo_event(#mousemotion{x=X,y=Y,state=Buttons}, Camera0, Redraw, true) ->
     {Dx,Dy,Camera} = camera_mouse_range(X, Y, Camera0),
     case Buttons band 6 of
-	0 ->					%None of MMB/RMB pressed.
+	0 ->
 	    rotate(-Dx, -Dy);
-	_Other ->				%MMB and/or RMB pressed.
+	_Other ->
 	    zoom(Dy)
     end,
     get_nendo_event(Camera, Redraw, true);
 nendo_event(#mousemotion{x=X,y=Y,state=Buttons}, Camera0, Redraw, false) ->
     {Dx,Dy,Camera} = camera_mouse_range(X, Y, Camera0),
     case Buttons band 6 of
-	0 ->					%None of MMB/RMB pressed.
+	0 ->
 	    pan(-Dx, -Dy);
-	_Other ->				%MMB and/or RMB pressed.
+	_Other ->
 	    zoom(Dy)
     end,
     get_nendo_event(Camera, Redraw, false);
@@ -566,7 +566,7 @@ mb_help() ->
 %%%
 
 sketchup(#mousebutton{button=2,state=?SDL_PRESSED,x=X0,y=Y0,mod=Mod}, Redraw)
-  when Mod band ?ALT_BITS =:= 0 ->
+  when (Mod band (?ALT_BITS  bor ?CTRL_BITS)) =:= 0  ->
     {X,Y} = wings_wm:local2global(X0, Y0),
     Camera = #camera{x=X,y=Y,ox=X,oy=Y},
     grab(),
@@ -606,8 +606,7 @@ sketchup_help() ->
 %%% Wings 3D camera suggested by oort
 %%%
 
-wings_cam(#mousebutton{button=2,x=X0,y=Y0,mod=Mod,state=?SDL_RELEASED}, Redraw)
-  when Mod band ?CTRL_BITS =:= 0 ->
+wings_cam(#mousebutton{button=2,x=X0,y=Y0,mod=0,state=?SDL_RELEASED}, Redraw) ->
     {X,Y} = wings_wm:local2global(X0, Y0),
     Camera = #camera{x=X,y=Y,ox=X,oy=Y},
     grab(),

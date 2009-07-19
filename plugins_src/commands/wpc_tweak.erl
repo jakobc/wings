@@ -805,8 +805,8 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 
 do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
     wings_dl:map(fun
-        (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
-             do_tweak(D, DX, DY, DxOrg, DyOrg, screen);
+      %  (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
+      %       do_tweak(D, DX, DY, DxOrg, DyOrg, screen);
         (D, _) ->
              do_tweak(D, DX, DY, DxOrg, DyOrg, Mode)
          end, []).

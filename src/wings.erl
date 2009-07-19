@@ -21,6 +21,7 @@
 -export([init_menubar/0]).
 -export([highlight_aim_setup/1]).
 -export([register_postdraw_hook/3,unregister_postdraw_hook/2]).
+-export([info_line/0]).
 
 -define(NEED_OPENGL, 1).
 -define(NEED_ESDL, 1).
@@ -133,6 +134,7 @@ init(File) ->
     wings_ask:init(),
     wings_job:init(),
     wings_develop:init(),
+    wings_tweak:init(),
 
     Op = main_loop_noredraw(St),		%Replace crash handler
                         %with this handler.
@@ -282,8 +284,15 @@ handle_event({open_file,Name}, St0) ->
     end;
 handle_event(Ev, St) ->
     case wings_camera:event(Ev, St) of
-	next -> handle_event_0(Ev, St);
+	next -> handle_event_tweak(Ev, St);
 	Other -> Other
+    end.
+
+handle_event_tweak(Ev, St) ->
+%% Check for Tweak events before testing for other events
+    case wings_tweak:tweak_event(Ev, St) of
+      next -> handle_event_0(Ev, St);
+      Other -> Other
     end.
 
 handle_event_0(#mousebutton{button=But,state=ButSt,mod=Mod}=Ev, St)
@@ -311,6 +320,20 @@ handle_event_2(#mousebutton{x=X,y=Y}=Ev0, #st{sel=Sel}=St0) ->
     case wings_menu:is_popup_event(Ev0) of
     no ->
         handle_event_3(Ev0, St0);
+    {pre,Xglobal,Yglobal,_} ->
+        case Sel =:= [] andalso wings_pref:get_value(use_temp_sel) of
+        false ->
+            shortcut_menu(Xglobal, Yglobal, St0);
+        true ->
+            case wings_pick:do_pick(X, Y, St0) of
+            {add,_,St} ->
+                Ev = wings_wm:local2global(Ev0),
+                wings_io:putback_event(Ev),
+                wings_wm:later({temporary_selection,St});
+            _ ->
+                shortcut_menu(Xglobal, Yglobal, St0)
+            end
+        end;
     {yes,Xglobal,Yglobal,_} ->
         case Sel =:= [] andalso wings_pref:get_value(use_temp_sel) of
         false ->
@@ -376,13 +399,7 @@ handle_event_3(need_save, St) ->
     main_loop(wings_u:caption(St#st{saved=false}));
 handle_event_3({new_default_command,DefCmd}, St) ->
     main_loop_noredraw(St#st{def=DefCmd});
-handle_event_3(got_focus, _) ->
-    Msg1 = wings_msg:button_format(?__(1,"Select")),
-    Msg2 = wings_camera:help(),
-    Msg3 = wings_msg:button_format([], [], ?__(2,"Show menu")),
-    Message = wings_msg:join([Msg1,Msg2,Msg3]),
-    wings_wm:message(Message),
-    keep;
+handle_event_3(got_focus, _) -> keep;
 handle_event_3(lost_focus, _) -> keep;
 handle_event_3({note,menu_aborted}, St) ->
     main_loop(clear_temp_sel(St));
@@ -403,6 +420,14 @@ handle_event_3({external,Op}, St) ->
     wpa:handle_external(Op,St),
     keep;
 handle_event_3(ignore, _St) -> keep.
+
+info_line() ->
+    Msg1 = wings_msg:button_format(?__(1,"Select")),
+    Msg2 = wings_camera:help(),
+    Msg3 = wings_msg:button_format([], [], ?__(2,"Show menu")),
+    Msg4 = ?__(3,"(Hold for Shortcut menu)"),
+    Message = wings_msg:join([Msg1,Msg2,Msg3,Msg4]),
+    wings_wm:message(Message).
 
 do_hotkey(Ev, #st{sel=[]}=St0) ->
     case wings_pref:get_value(use_temp_sel) of
@@ -756,8 +781,13 @@ command_1({develop,Cmd}, St) ->
 
 %% wings_job action events.
 command_1({wings_job,Command}, St) ->
-    wings_job:command(Command, St).
+    wings_job:command(Command, St);
 
+%% Tweak menu
+command_1({tweak, Cmd}, St) ->
+    wings_tweak:command(Cmd, St);
+command_1({shortcut, Cmd}, St) ->
+    shortcut_menu(Cmd, St).
 
 popup_menu(X, Y, #st{sel=[]}=St) ->
     wings_shapes:menu(X, Y, St);
@@ -771,6 +801,49 @@ popup_menu(X, Y, #st{selmode=Mode}=St) ->
         face -> wings_face_cmd:menu(X, Y, St);
         body -> wings_body:menu(X, Y, St)
         end
+    end.
+
+shortcut_menu(X,Y,#st{sel=[]}) ->
+    Menu = [{?__(1,"Shapes Menu"),shapes,
+            shortcut_menu_help()}|shortcut_menu_items()],
+    wings_menu:popup_menu(X, Y, shortcut, Menu);
+shortcut_menu(X, Y, #st{selmode=Selmode}=St) ->
+    Help = shortcut_menu_help(),
+    Mode = case wings_light:is_any_light_selected(St) of
+    true -> {?__(8,"Lights Menu"),lights,Help};
+    false ->
+        case Selmode of
+        vertex -> {?__(2,"Vertex Menu"),vertex,Help};
+        edge -> {?__(3,"Edge Menu"),edge,Help};
+        face -> {?__(4,"Face Menu"),face,Help};
+        body -> {?__(5,"Body Menu"),body,Help}
+        end
+    end,
+    Menu = [Mode|shortcut_menu_items()],
+    wings_menu:popup_menu(X, Y, shortcut, Menu).
+
+
+shortcut_menu_items() ->
+    Help = shortcut_menu_help(),
+    [{?__(1,"Tweak Menu"), tweak, Help},
+     {?__(2,"Select Menu"), select, Help}].
+
+shortcut_menu_help() -> ?__(1,"Release R to select menu").
+
+shortcut_menu(OpenMenu,St) ->
+    {_,X,Y} =  wings_io:get_mouse_state(),
+    case OpenMenu of
+      vertex -> wings_vertex_cmd:menu(X, Y, St);
+      edge -> wings_edge_cmd:menu(X, Y, St);
+      face -> wings_face_cmd:menu(X, Y, St);
+      body -> wings_body:menu(X, Y, St);
+      shapes -> wings_shapes:menu(X, Y, St);
+      lights -> wings_light:menu(X, Y, St);
+      select ->
+          Owner = wings_wm:this(),
+          Menu = wings_sel_cmd:menu(St),
+          wings_menu:menu(X, Y, Owner, select, Menu);
+      tweak -> wings_tweak:tweak_menu(X,Y)
     end.
 
 init_menubar() ->
