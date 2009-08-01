@@ -13,7 +13,7 @@
 -module(wings_tweak).
 
 -export([init/0,command/2]).
--export([tweak_event/2,tweak_menu/2]).
+-export([tweak_event/2,menu/2]).
 
 -import(lists,[member/2,foldl/3]).
 
@@ -32,7 +32,7 @@
      mag_type=dome,			% magnet type: Type
      mag_rad=1.0,			% magnet influence radius
      cam,					% camera mode
-     id,                    % object id the mouse was over when tweak began
+     id,                    % {Id,Elem} mouse was over when tweak began
      ox,oy,					% original X,Y
      cx,cy,					% current X,Y
      st}).					% wings st record (working)
@@ -155,20 +155,36 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=#st{sel=Sel0}=St0}=T0) ->
       none -> next
     end.
 
-get_id([],[{Id,_}]) ->  Id;
-get_id([{Id,_}],[{Id,_}]) ->  Id;
-get_id([{Id,_}],[]) ->  Id;
+get_id([],[{Id,El}]) ->  {Id,El};
+get_id([{Id,El1}],[{Id,El2}]) ->
+    S1 = gb_sets:size(El1),
+    S2 = gb_sets:size(El2),
+    El = if
+      S1 > S2 -> gb_sets:subtract(El1, El2);
+      true -> gb_sets:subtract(El2, El1)
+    end,
+    {Id,El};
+get_id([{Id,El}],[]) ->  {Id,El};
 get_id(Sel0, Sel) ->
     L1 = length(Sel0),
     L2 = length(Sel),
-    [{Id,_}] = if
+    [Res] = if
             L1 =:= L2 ->
-              [Sel1|_] = lists:subtract(Sel0, Sel),
-              [Sel1];
-            L1 < L2 -> ordsets:subtract(Sel, Sel0);
-            L1 > L2 -> ordsets:subtract(Sel0, Sel)
+              [{Id,El1}] = lists:subtract(Sel0, Sel),
+              [{Id,El2}] = lists:subtract(Sel, Sel0),
+               S1 = gb_sets:size(El1),
+               S2 = gb_sets:size(El2),
+               El = if
+                 S1 > S2 -> gb_sets:subtract(El1, El2);
+                 true -> gb_sets:subtract(El2, El1)
+               end,
+               [{Id,El}];
+            L1 < L2 ->
+              ordsets:subtract(Sel, Sel0);
+            L1 > L2 ->
+              ordsets:subtract(Sel0, Sel)
     end,
-    Id.
+    Res.
 
 %% Event handler for active tweak tools
 update_tweak_handler(T) ->
@@ -367,9 +383,9 @@ in_drag_adjust_magnet_radius(MouseMovement, #tweak{mag_rad=Falloff0,st=St}=T0) -
     _otherwise -> T0#tweak{st=St}
     end.
 
-end_magnet_adjust(OrigId) ->
+end_magnet_adjust({OrigId,El}) ->
     wings_dl:map(fun(#dlo{src_we=#we{id=Id}}=D, _) ->
-             if OrigId =:= Id -> show_cursor(D); true -> ok end,
+             if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
              D#dlo{vs=none,sel=none,drag=none}
          end, []).
 
@@ -394,9 +410,9 @@ begin_drag_fun(#dlo{src_sel={Mode,Els},src_we=We}=D0, MM, St, T) ->
     D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}};
 begin_drag_fun(D, _, _, _) -> D.
 
-end_drag(#tweak{mode=Mode, id=OrigId, st=St0}) ->
+end_drag(#tweak{mode=Mode, id={OrigId,El}, st=St0}) ->
     St = wings_dl:map(fun (#dlo{src_we=#we{id=Id}}=D, St1) ->
-                  if OrigId =:= Id -> show_cursor(D); true -> ok end,
+                  if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
                   end_drag(Mode, D, St1)
                 end, St0),
     wings_wm:later({new_state,St}),
@@ -918,16 +934,16 @@ add_constraints([],[],Constraints) ->
 %% After releasing lmb to conclude drag, unhide the cursor and make sure its
 %% inside the window at the centre of the selection if possible.
 
-show_cursor(#dlo{src_we=#we{id=Id}, drag={matrix,Pos,_,_}}) ->
+show_cursor(_, #dlo{src_we=#we{id=Id}, drag={matrix,Pos,_,_}}) ->
     Matrices = wings_u:get_matrices(Id, original),
-    show_cursor(Matrices, Pos);
-show_cursor(#dlo{src_sel={Mode,Els},src_we=#we{id=Id}=We,drag=#drag{mm=MM}}) ->
-    Vs0 = sel_to_vs(Mode, gb_sets:to_list(Els), We),
+    show_cursor_1(Matrices, Pos);
+show_cursor(El, #dlo{src_sel={Mode,_},src_we=#we{id=Id}=We,drag=#drag{mm=MM}}) ->
+    Vs0 = sel_to_vs(Mode, gb_sets:to_list(El), We),
     Center = wings_vertex:center(Vs0, We),
     Matrices = wings_u:get_matrices(Id, MM),
-    show_cursor(Matrices, Center).
+    show_cursor_1(Matrices, Center).
 
-show_cursor(Matrices, Pos) ->
+show_cursor_1(Matrices, Pos) ->
     {W,H} = wings_wm:win_size(),
     {X0,Y0,_} = obj_to_screen(Matrices, Pos),
     {X1,Y1} = {trunc(X0), H - trunc(Y0)},
@@ -944,7 +960,7 @@ show_cursor(Matrices, Pos) ->
     wings_io:ungrab(X,Y).
 
 %% Tweak Menu
-tweak_menu(X, Y) ->
+menu(X, Y) ->
     Owner = wings_wm:this(),
     Set = [?__(1,"Set Key Binding: Hold modifiers and/or press a mouse button.")],
     Swap = [?__(2,"Swap Bindings: Press another key binding to swap keys with that tool.")],
