@@ -14,6 +14,8 @@
 -module(wings_camera).
 -export([init/0,prefs/0,help/0,event/2,event/3]).
 
+-export([tweak_cam/3]).
+
 -define(NEED_ESDL, 1).
 -include("wings.hrl").
 -import(erlang, [max/2]).
@@ -199,7 +201,7 @@ scroll_help() ->
 event(Ev, St=#st{}) -> 
     event(Ev,St,none).
 %% Scroll wheel camera events
-event(#mousebutton{button=B}=Ev, _St, _Redraw) when B==4; B==5 ->
+event(#mousebutton{button=B}=Ev, _St, _Redraw) when B=:=4; B=:=5 ->
     generic_event(Ev,_St,_Redraw);
 % Camera mode specific events
 event(Ev, St, Redraw) ->
@@ -213,6 +215,56 @@ event(Ev, St, Redraw) ->
 	mb -> mb(Ev, #state{st=St, func=Redraw});
 	sketchup -> sketchup(Ev, #state{st=St, func=Redraw})
     end.
+
+%% Tweak mode cam to quickly tumble by pressing C
+tweak_cam(X,Y,St) ->
+    Camera = #camera{x=X,y=Y,ox=X,oy=Y},
+    {seq,push,get_tweak_cam_event(Camera, St)}.
+
+get_tweak_cam_event(Camera, St) ->
+    {replace,fun(Ev) -> tweak_cam_event(Ev, Camera, St) end}.
+
+tweak_cam_event(#mousemotion{x=X0,y=Y0}, Camera0, St) ->
+    case wings_io:is_key_pressed($c) of
+      true ->
+        {Dx,Dy,Camera} = camera_mouse_range(X0, Y0, Camera0),
+        rotate(Dx,Dy),
+        wings_wm:dirty(),
+        get_tweak_cam_event(Camera, St);
+      false ->
+        case wings_io:get_mouse_state() of
+          {0,_,_} ->
+            wings_wm:later(#mousebutton{button=1,x=X0,y=Y0,mod=0,state=?SDL_RELEASED}),
+            pop;
+          _ ->
+            pop
+        end
+     end;
+tweak_cam_event(redraw, _Camera, St) ->
+    wings:redraw(St),
+    keep;
+tweak_cam_event(#mousebutton{button=B,state=?SDL_RELEASED}=Ev, Camera, St)
+  when B =< 3->
+    case wings_io:is_key_pressed($c) of
+      true ->
+        generic_event(Ev,Camera,St);
+      false ->
+        pop
+     end;
+tweak_cam_event(Ev, Camera, St) ->
+    case wings_io:is_key_pressed($c) of
+      true ->
+        generic_event(Ev,Camera,St);
+      false ->
+        case wings_io:get_mouse_state() of
+          {0,X,Y} ->
+            wings_wm:later(#mousebutton{button=1,x=X,y=Y,mod=0,state=?SDL_RELEASED}),
+            pop;
+          _ ->
+            pop
+        end
+     end.
+
 
 %%%
 %%% Blender style camera.

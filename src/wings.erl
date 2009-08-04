@@ -418,10 +418,14 @@ handle_event_3({external,Op}, St) ->
 handle_event_3(ignore, _St) -> keep.
 
 info_line() ->
+    Mod = case wings_pref:get_value(camera_mode) of
+        maya -> wings_s:key(ctrl);
+        _ -> wings_s:key(alt)
+    end,
     Msg1 = wings_msg:button_format(?__(1,"Select")),
     Msg2 = wings_camera:help(),
     Msg3 = wings_msg:button_format([], [], ?__(2,"Show menu")),
-    Msg4 = ?__(3,"(Hold for Shortcut menu)"),
+    Msg4 = [Mod, "+", wings_msg:button_format([], [], ?__(3,"Tweak menu"))],
     Message = wings_msg:join([Msg1,Msg2,Msg3,Msg4]),
     wings_wm:message(Message).
 
