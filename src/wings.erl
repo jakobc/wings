@@ -320,20 +320,6 @@ handle_event_2(#mousebutton{x=X,y=Y}=Ev0, #st{sel=Sel}=St0) ->
     case wings_menu:is_popup_event(Ev0) of
     no ->
         handle_event_3(Ev0, St0);
-    {yes,Xglobal,Yglobal,0} ->
-        case Sel =:= [] andalso wings_pref:get_value(use_temp_sel) of
-        false ->
-            popup_menu(Xglobal, Yglobal, St0);
-        true ->
-            case wings_pick:do_pick(X, Y, St0) of
-            {add,_,St} ->
-                Ev = wings_wm:local2global(Ev0),
-                wings_io:putback_event(Ev),
-                wings_wm:later({temporary_selection,St});
-            _ ->
-                popup_menu(Xglobal, Yglobal, St0)
-            end
-        end;
     {yes,Xglobal,Yglobal,Mod} ->
         Cam = wings_pref:get_value(camera_mode),
         if
@@ -342,8 +328,20 @@ handle_event_2(#mousebutton{x=X,y=Y}=Ev0, #st{sel=Sel}=St0) ->
           Mod band ?ALT_BITS =/= 0 ->
               wings_tweak:menu(Xglobal,Yglobal);
           true ->
-              handle_event_3(Ev0, St0)
-        end
+              case Sel =:= [] andalso wings_pref:get_value(use_temp_sel) of
+              false ->
+                  popup_menu(Xglobal, Yglobal, St0);
+              true ->
+                  case wings_pick:do_pick(X, Y, St0) of
+                  {add,_,St} ->
+                      Ev = wings_wm:local2global(Ev0),
+                      wings_io:putback_event(Ev),
+                      wings_wm:later({temporary_selection,St});
+                  _ ->
+                      popup_menu(Xglobal, Yglobal, St0)
+                  end
+              end
+         end
     end;
 handle_event_2(Ev, St) -> handle_event_3(Ev, St).
         

@@ -232,13 +232,7 @@ tweak_cam_event(#mousemotion{x=X0,y=Y0}, Camera0, St) ->
         wings_wm:dirty(),
         get_tweak_cam_event(Camera, St);
       false ->
-        case wings_io:get_mouse_state() of
-          {0,_,_} ->
-            wings_wm:later(#mousebutton{button=1,x=X0,y=Y0,mod=0,state=?SDL_RELEASED}),
-            pop;
-          _ ->
-            pop
-        end
+        quit_tweak_cam()
      end;
 tweak_cam_event(redraw, _Camera, St) ->
     wings:redraw(St),
@@ -249,23 +243,24 @@ tweak_cam_event(#mousebutton{button=B,state=?SDL_RELEASED}=Ev, Camera, St)
       true ->
         generic_event(Ev,Camera,St);
       false ->
-        pop
+        quit_tweak_cam()
      end;
 tweak_cam_event(Ev, Camera, St) ->
     case wings_io:is_key_pressed($c) of
       true ->
         generic_event(Ev,Camera,St);
       false ->
-        case wings_io:get_mouse_state() of
-          {0,X,Y} ->
-            wings_wm:later(#mousebutton{button=1,x=X,y=Y,mod=0,state=?SDL_RELEASED}),
-            pop;
-          _ ->
-            pop
-        end
+        quit_tweak_cam()
      end.
 
-
+quit_tweak_cam() ->
+    case wings_io:get_mouse_state() of
+      {0,X,Y} ->
+        wings_wm:later(#mousebutton{button=1,x=X,y=Y,mod=0,state=?SDL_RELEASED}),
+        pop;
+      _ ->
+        pop
+    end.
 %%%
 %%% Blender style camera.
 %%%
@@ -658,7 +653,8 @@ sketchup_help() ->
 %%% Wings 3D camera suggested by oort
 %%%
 
-wings_cam(#mousebutton{button=2,x=X0,y=Y0,mod=0,state=?SDL_RELEASED}, Redraw) ->
+wings_cam(#mousebutton{button=2,x=X0,y=Y0,mod=Mod,state=?SDL_RELEASED}, Redraw)
+  when Mod band (?CTRL_BITS bor ?SHIFT_BITS bor ?ALT_BITS) =:= 0 ->
     {X,Y} = wings_wm:local2global(X0, Y0),
     Camera = #camera{x=X,y=Y,ox=X,oy=Y},
     grab(),

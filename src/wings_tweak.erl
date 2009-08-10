@@ -15,16 +15,16 @@
 -export([init/0,command/2]).
 -export([tweak_event/2,menu/2]).
 
--import(lists,[member/2,foldl/3]).
-
 -define(NEED_OPENGL, 1).
 -define(NEED_ESDL, 1).
 
 -define(L_ALT, 307).
 -define(R_ALT, 308).
 
--include_lib("wings.hrl").
--include_lib("e3d.hrl").
+-include("wings.hrl").
+-include("e3d.hrl").
+
+-import(lists,[member/2,foldl/3]).
 
 -record(tweak,
     {mode,					% current tweak tool
@@ -96,13 +96,14 @@ handle_tweak_event_0(#mousebutton{button=B, x=X,y=Y, mod=Mod, state=?SDL_PRESSED
           handle_tweak_event_1(T#tweak{mode=Mode, ox=X, oy=Y});
       error -> next
     end;
-
+handle_tweak_event_0(_,#tweak{st=#st{selmode=body}}) ->
+    next;
 
 %% Tweak Adjust Magnet Radius: Alt + Mouse Motion
-handle_tweak_event_0(#keyboard{sym=Sym,mod=0},
-  #tweak{st=#st{selmode=Selmode,sel=Sel0}=St0}=T0)
-  %when Mod band ?ALT_BITS =/= 0, Selmode =/= body ->
-  when Sym =:= ?L_ALT, Selmode =/= body; Sym =:= ?R_ALT, Selmode =/= body->
+handle_tweak_event_0(#keyboard{sym=Sym, mod=Mod},
+  #tweak{st=#st{sel=Sel0}=St0}=T0)
+  when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
+       Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     case wings_pick:do_pick(X,Y,St0) of
@@ -181,9 +182,9 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
       Cs =:= [true,true,false] -> xymove;
       Cs =:= [false,true,true] -> yzmove;
       Cs =:= [true,false,true] -> zxmove;
-      Cs =:= [true,false,false]  -> xmove;
-      Cs =:= [false,true,false]  -> ymove;
-      Cs =:= [false,false,true]  -> zmove;
+      Cs =:= [true,false,false] -> xmove;
+      Cs =:= [false,true,false] -> ymove;
+      Cs =:= [false,false,true] -> zmove;
       true -> screen
     end,
     wings_io:warp(OX,OY),
@@ -205,13 +206,15 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
     update_tweak_handler(T);
 
 %% Tweak mode cam to quickly tumble by pressing C
-handle_tweak_drag_event(#keyboard{sym=$c, mod=0, state=?SDL_PRESSED},#tweak{ox=OX, oy=OY, st=St}) ->
+handle_tweak_drag_event(#keyboard{sym=$c, mod=Mod, state=?SDL_PRESSED},#tweak{ox=OX, oy=OY, st=St})
+    when Mod band (?ALT_BITS bor ?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     wings_camera:tweak_cam(OX,OY,St);
-
-handle_tweak_drag_event(#keyboard{sym=Sym, mod=0}, #tweak{mode=Mode,
-  magnet=true, cx=CX, cy=CY, ox=OX, oy=OY, st=#st{selmode=Selmode}}=T0)
-%  when Mod band ?ALT_BITS =/= 0, Selmode =/= body ->
-  when Sym =:= ?L_ALT, Selmode =/= body; Sym =:= ?R_ALT, Selmode =/= body->
+handle_tweak_drag_event(Ev,#tweak{st=#st{selmode=body}}=T) ->
+    handle_tweak_drag_event_1(Ev,T);
+handle_tweak_drag_event(#keyboard{sym=Sym, mod=Mod}, #tweak{mode=Mode,
+  magnet=true, cx=CX, cy=CY, ox=OX, oy=OY}=T0)
+  when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
+       Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     DX = GX-OX, %since last move X
@@ -222,9 +225,11 @@ handle_tweak_drag_event(#keyboard{sym=Sym, mod=0}, #tweak{mode=Mode,
     do_tweak(DX,DY,DxOrg,DyOrg,Mode),
     T = T0#tweak{cx=DxOrg,cy=DyOrg},
     update_in_drag_radius_handler(T);
+handle_tweak_drag_event(Ev,T) ->
+     handle_tweak_drag_event_1(Ev,T).
 
 %% Catch hotkeys for toggling xyz constraints and magnet attributes
-handle_tweak_drag_event(#keyboard{}=Ev, #tweak{st=St}=T0) ->
+handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{st=St}=T0) ->
     T = case wings_hotkey:event(Ev,St) of
       next ->
           is_tweak_combo(T0);
@@ -232,31 +237,33 @@ handle_tweak_drag_event(#keyboard{}=Ev, #tweak{st=St}=T0) ->
           is_tweak_hotkey(Action, T0)
     end,
     update_tweak_handler(T);
-
-handle_tweak_drag_event(#mousebutton{button=B}=Ev, #tweak{st=St}=T) ->
+handle_tweak_drag_event_1(#mousebutton{button=B}=Ev, #tweak{st=St}=T) ->
     case B > 3 of
       true ->
           case wings_camera:event(Ev, St) of
-            next -> handle_tweak_drag_event_1(Ev, T);
+            next -> handle_tweak_drag_event_2(Ev, T);
             Other -> Other
           end;
       false ->
-          handle_tweak_drag_event_1(Ev, T)
-    end.
-handle_tweak_drag_event_1(Ev, #tweak{cam=Cam, st=St}=T)
+          handle_tweak_drag_event_2(Ev, T)
+    end;
+handle_tweak_drag_event_1(_,_) ->
+    keep.
+
+handle_tweak_drag_event_2(Ev, #tweak{cam=Cam, st=St}=T)
   when Cam=:=maya; Cam=:=tds; Cam=:=blender; Cam=:=sketchup; Cam=:=mb ->
     case wings_camera:event(Ev, St) of
-      next -> handle_tweak_drag_event_2(Ev, T);
+      next -> handle_tweak_drag_event_3(Ev, T);
       Other -> Other
     end;
-handle_tweak_drag_event_1(Ev,T) ->
-    handle_tweak_drag_event_2(Ev,T).
+handle_tweak_drag_event_2(Ev,T) ->
+    handle_tweak_drag_event_3(Ev,T).
 
 %% Mouse Button released, so we end the drag sequence.
-handle_tweak_drag_event_2(#mousebutton{button=B,state=?SDL_RELEASED}, T) when B =< 3->
+handle_tweak_drag_event_3(#mousebutton{button=B,state=?SDL_RELEASED}, T) when B =< 3->
     end_drag(T);
 
-handle_tweak_drag_event_2(_,_) ->
+handle_tweak_drag_event_3(_,_) ->
     keep.
 
 %% Event handler for magnet resize
@@ -424,11 +431,16 @@ end_drag(_, #dlo{src_we=#we{id=Id},drag={matrix,_,Matrix,_}}=D,
     {D2#dlo{vs=none,sel=none,drag=none},St};
 end_drag(slide_collapse, #dlo{src_sel={_,_},src_we=#we{id=Id}}=D0, #st{shapes=Shs0}=St0) ->
     #dlo{src_we=We} = D = wings_draw:join(D0),
-    {Nc,We1} = collapse_short_edges(0.0001,We),
-    Shs = gb_trees:update(Id,We1, Shs0),
-    St = if
-      Nc -> St0#st{shapes=Shs};
-      true -> St0#st{shapes=Shs,sel=[]}
+    St = case collapse_short_edges(0.0001,We) of
+      {delete, _} ->
+         Shs = gb_trees:delete(Id,Shs0),
+         St0#st{shapes=Shs,sel=[]};
+      {true, We1} ->
+         Shs = gb_trees:update(Id, We1, Shs0),
+         St0#st{shapes=Shs};
+      {false, We1} ->
+         Shs = gb_trees:update(Id, We1, Shs0),
+         St0#st{shapes=Shs, sel=[]}
     end,
     {D#dlo{vs=none,sel=none,drag=none},St};
 end_drag(_, #dlo{src_sel={_,_},src_we=#we{id=Id}}=D0, #st{shapes=Shs0}=St0) ->
@@ -554,17 +566,21 @@ collapse_short_edges(Tolerance, #we{es=Etab,vp=Vtab}=We) ->
               end
           end, [], Etab),
     NothingCollapsed = Short =:= [],
-    We1 = wings_collapse:collapse_edges(Short,We),
-    {NothingCollapsed, We1}.
+    case catch wings_collapse:collapse_edges(Short,We) of
+        #we{}=We1 ->
+            {NothingCollapsed, We1};
+        _ ->
+            {delete, #we{}}
+    end.
 
 %% end of additional geo-functions block
 
 do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
     wings_dl:map(fun
         (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
-            Allowed = [screen, xmove, ymove, zmove, xymove, yzmove, zxmove],
-            case lists:member(Mode,Allowed) of
-              true ->
+            case Mode of
+              M when M =:= xmove; M =:= ymove; M =:= zmove;
+                     M =:= xymove; M =:= yzmove; M =:= zxmove ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, Mode);
               false ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, screen)
@@ -745,9 +761,10 @@ begin_magnet(#tweak{magnet=true}=T, Vs, Center, #we{vp=Vtab0}=We) ->
     Mag = #mag{orig=Center,vs=Near},
     {[Va || {Va,_,_,_,_} <- Near],Mag}.
 
-near(Center, Vs, MagVs, Mirror, #tweak{mag_rad=R,mag_type=Type}, We) ->
+near(Center, Vs, MagVs0, Mirror, #tweak{mag_rad=R,mag_type=Type}, We) ->
     RSqr = R*R,
-    M0 = foldl(fun({V,Pos}, A) ->
+    MagVs = minus_locked_vs(MagVs0, We),
+    M = foldl(fun({V,Pos}, A) ->
               case e3d_vec:dist_sqr(Pos, Center) of
               DSqr when DSqr =< RSqr ->
                   D = math:sqrt(DSqr),
@@ -758,7 +775,7 @@ near(Center, Vs, MagVs, Mirror, #tweak{mag_rad=R,mag_type=Type}, We) ->
               end;
          (_, A) -> A
           end, [], MagVs),
-    M = minus_locked_vs(M0,We),
+   % M = minus_locked_vs(M0,We),
     foldl(fun(V, A) ->
           Matrix = mirror_matrix(V, Mirror),
           Pos = wpa:vertex_pos(V, We),
@@ -821,8 +838,7 @@ magnet_tweak_slide_fn(#mag{vs=Vs}=Mag, We,Orig,TweakPos) ->
     {Vtab,Mag#mag{vtab=Vtab}}.
 
 draw_magnet(#tweak{st=#st{selmode=body}}) -> ok;
-draw_magnet(#tweak{magnet=true, mag_rad=R, mag_type=Mt}) ->
-    R2=[get_inv_magnet_value(Mt,X/10.0)||X<-lists:seq(1,9)],
+draw_magnet(#tweak{magnet=true, mag_rad=R}) ->
     wings_dl:fold(fun(D, _) ->
         gl:pushAttrib(?GL_ALL_ATTRIB_BITS),
         gl:disable(?GL_DEPTH_TEST),
@@ -830,46 +846,24 @@ draw_magnet(#tweak{magnet=true, mag_rad=R, mag_type=Mt}) ->
         gl:blendFunc(?GL_SRC_ALPHA, ?GL_ONE_MINUS_SRC_ALPHA),
         wings_view:load_matrices(false),
         gl:color4f(0, 0, 1, 0.06),
-        draw_magnet_1(D, R,R2),
+        draw_magnet_1(D, R),
         gl:popAttrib()
     end, []);
 draw_magnet(_) -> ok.
 
-draw_magnet_1(#dlo{mirror=Mtx,drag=#drag{mm=Side,pos={X,Y,Z}}}, R,R2) ->
+draw_magnet_1(#dlo{src_sel={Mode,Els},src_we=We,mirror=Mtx,drag=#drag{mm=Side}}, R) ->
     case Side of
     mirror -> gl:multMatrixf(Mtx);
     original -> ok
     end,
+    Vs = sel_to_vs(Mode, gb_sets:to_list(Els), We),
+    {X,Y,Z} = wings_vertex:center(Vs, We),
     gl:translatef(X, Y, Z),
-
     Obj = glu:newQuadric(),
-    glu:quadricDrawStyle(Obj, ?GLU_FILL),
-    glu:quadricNormals(Obj, ?GLU_SMOOTH),
     glu:sphere(Obj, R, 20, 20),
-    glu:deleteQuadric(Obj),
-    gl:color4f(0, 0, 1, 0.03),
-    lists:foreach(
-      fun(R3) ->
-          Obj2 = glu:newQuadric(),
-          glu:quadricDrawStyle(Obj2, ?GLU_FILL),
-          glu:quadricNormals(Obj2, ?GLU_SMOOTH),
-          glu:sphere(Obj, R3*R, 20, 20),
-          glu:deleteQuadric(Obj2)
-      end,R2);
+    glu:deleteQuadric(Obj);
 
-draw_magnet_1(_, _,_) -> [].
-
-get_inv_magnet_value(MagType,Value) ->
-    get_inv_magnet_value2(MagType,Value,0.0).
-
-get_inv_magnet_value2(MagType,Value,Pos) ->
-    Step=0.1,
-    V1=mf(MagType,Pos,1.0),
-    V2=mf(MagType,Pos+Step,1.0),
-    case Value<V1 andalso Value>=V2 of
-      true -> Pos+(V1-Value)/(V1-V2)*Step;
-      false -> get_inv_magnet_value2(MagType,Value,Pos+Step)
-    end.
+draw_magnet_1(_, _) -> [].
 
 mirror_info(#we{mirror=none}) -> {[],none};
 mirror_info(#we{mirror=Face}=We) ->
@@ -900,14 +894,14 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 
 save_magnet_prefs(#tweak{magnet=Mag, mag_type=MT, mag_rad=MagR}) ->
     wings_pref:set_value(tweak_magnet, {Mag, MT, MagR}).
+
 %%
 %%%% XYZ Tweak Constraints
 %%
-
 constraints() ->
     FKeys = fkey_combo(), % held xyz constraints
     TKeys = wings_pref:get_value(tweak_xyz), % Toggled xyz constraints
-    add_constraints(FKeys,TKeys,[]).
+    add_constraints(FKeys,TKeys).
 
 %% Check for pressed Fkeys
 fkey_combo() ->
@@ -917,14 +911,11 @@ fkey_combo() ->
     [F1,F2,F3].
 
 %% Add or subtract xyz Held constraints from Toggled constraints
-add_constraints([true|Fkeys],[false|Tkeys],Constraints) ->
-    add_constraints(Fkeys,Tkeys,[true|Constraints]);
-add_constraints([true|Fkeys],[true|Tkeys],Constraints) ->
-    add_constraints(Fkeys,Tkeys,[false|Constraints]);
-add_constraints([_|Fkeys],[Key|Tkeys],Constraints) ->
-    add_constraints(Fkeys,Tkeys,[Key|Constraints]);
-add_constraints([],[],Constraints) ->
-    lists:reverse(Constraints).
+add_constraints([false|Fkeys],[T|Tkeys]) ->
+    [T|add_constraints(Fkeys,Tkeys)];
+add_constraints([true|Fkeys],[T|Tkeys]) ->
+    [not T|add_constraints(Fkeys,Tkeys)];
+add_constraints([],[]) -> [].
 
 %% After releasing lmb to conclude drag, unhide the cursor and make sure its
 %% inside the window at the centre of the selection if possible.
@@ -1357,7 +1348,7 @@ help_msg_magnet_radius() ->
      ?__(1,"To adjust the Magnet Radius, first release any modifier keys, and then press [Alt].").
 
 help_msg_magnet_hotkeys() ->
-    [?__(1,"You can setup hotkeys for turning the magnet on or off, or changing the magnet type in the Tweak menu."),
+    [?__(1,"You can setup hotkeys in the Tweak menu for turning the magnet on or off, or changing the magnet type while tweaking."),
      ?__(2,"Go to Tweak Menu|Magnets and use the standard Insert hotkey method to do so."),
      ?__(3,"If these keys are set, you can call them in mid drag to see how the different magnet options affect the result.")].
 
@@ -1365,22 +1356,25 @@ help_msg_tool_change() ->
    [?__(1,"There a few ways you can switch between the various tweak tools:\n"),
     ?__(2,"\t-Using the Tweak menu and selecting a tool with the Lmb will bind Lmb to that tool's action while Tweak is enabled.\n"),
     ?__(3,"\t-If a modifier key combo has been set to a tools in the Tweak Menu, you can call these by pressing the appropriate buttons while draging.\n"),
-    ?__(4,"\t-Using a hotkey assigned by the Insert method, will switch the Lmb's function to that tool when called.")].
+    ?__(4,"\t-Using a hotkey assigned by the Insert method, will switch the Lmb's function to that tool when called (even during tweak).")].
 
 help_msg_deselect() ->
     [?__(1,"Press Deselect (spacebar), to return to the tool assigned to Lmb."),
-     ?__(2,"To switch to a tool assigned to Alt plus a mouse button, hold the Alt combo and tap the spacebar to deselect the magnet.")].
+     ?__(2,"To switch to a tool assigned to Alt, hold Alt and tap the spacebar to deselect the magnet.")].
 
 help_msg_camera() ->
     [?__(1,"Hold C to tumble the camera."),
-     ?__(2,"Common camera functions via the mouse are also available.")].
+     ?__(2,"This is useful for camera modes such as the Wings Camera where entering into an active camera state is not allowed during tweak."),
+     ?__(3,"Common camera functions via the mouse are available in most modes.")].
 
 help_msg_view_menu() ->
-    [?__(1,"Many View menu items are available during drag."),
-     ?__(2,"View commands can be used to change camera positions while tweaking.")].
+    [?__(1,"Many View menu items are available while tweaking."),
+     ?__(2,"View commands can be used to change camera positions, view along xyz, or frame a selection."),
+     ?__(3,"For example you can use Aim to point the camera at the selection's new coordinates, and then continue to tweak.")].
 
 help_msg_general() ->
-    ?__(1,"More information specific to certain tools will appear in the info line as necessary.").
+    [?__(1,"More information specific to certain tools will appear in the info line as necessary."),
+     ?__(2,"You can turn off this message box in the Tweak menu.")].
 
 %cr(1) ->
 %    "\n";
@@ -1562,18 +1556,19 @@ is_tweak_hotkey({select,deselect}, T) ->
 is_tweak_hotkey(_, T) -> T.
 
 is_tweak_combo(#tweak{st=#st{selmode=body}}=T) -> T;
-is_tweak_combo(#tweak{palette=Pal,st=St0}=T) ->
+is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
     {B,X,Y} = wings_io:get_mouse_state(),
     Ctrl = wings_io:is_modkey_pressed(?CTRL_BITS),
     Shift = wings_io:is_modkey_pressed(?SHIFT_BITS),
     Alt = wings_io:is_modkey_pressed(?ALT_BITS),
     case orddict:find({B,{Ctrl,Shift,Alt}},Pal) of
-        {ok, Mode} when Mode =/= select ->
+        {ok, Mode} -> T;
+        {ok, NewMode} when NewMode =/= select ->
             St = wings_dl:map(fun (D, _) ->
-                      update_drag(D, T#tweak{mode=Mode})  % used to find mid tweak model data
+                      update_drag(D, T)  % used to find mid tweak model data
                       end, St0),
             do_tweak(0.0, 0.0, 0.0, 0.0, screen),
-            T#tweak{mode=Mode,st=St,ox=X,oy=Y,cx=0,cy=0};
+            T#tweak{mode=NewMode,st=St,ox=X,oy=Y,cx=0,cy=0};
         _ -> T
     end.
 
@@ -1586,23 +1581,5 @@ update_drag(#dlo{src_sel={Mode,Els},src_we=#we{id=Id},drag=#drag{mm=MM}}=D0,
     Center = wings_vertex:center(Vs0, We),
     {Vs,Magnet} = begin_magnet(T#tweak{st=St}, Vs0, Center, We),
     D = wings_draw:split(D1, Vs, St),
-    {D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}},St}.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    {D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}},St};
+update_drag(D,#tweak{st=St}) -> {D,St}.
