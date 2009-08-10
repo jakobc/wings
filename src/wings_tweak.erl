@@ -225,13 +225,13 @@ handle_tweak_drag_event(#keyboard{sym=Sym, mod=0}, #tweak{mode=Mode,
 
 %% Catch hotkeys for toggling xyz constraints and magnet attributes
 handle_tweak_drag_event(#keyboard{}=Ev, #tweak{st=St}=T0) ->
-    #tweak{mode=Mode}=T = case wings_hotkey:event(Ev,St) of
+    T = case wings_hotkey:event(Ev,St) of
       next ->
           is_tweak_combo(T0);
       Action ->
           is_tweak_hotkey(Action, T0)
     end,
-    mode_message(Mode),
+    do_tweak(0.0, 0.0, 0.0, 0.0, screen),
     update_tweak_handler(T);
 
 handle_tweak_drag_event(#mousebutton{button=B}=Ev, #tweak{st=St}=T) ->
@@ -1103,7 +1103,7 @@ mag_thelp(spike) -> ?__(3,"This magnet pulls and pushes geometry out to a sharp 
 
 magnet_radius() -> ?__(1,"Magnet Radius").
 
-crossmark(true) -> [crossmark];
+crossmark(false) -> [];
 crossmark({MagType, MagType}) -> [crossmark];
 crossmark({_, MagType}) when is_atom(MagType)-> [];
 crossmark("none") -> [];
@@ -1558,21 +1558,51 @@ is_tweak_hotkey({view,Cmd}, #tweak{st=St0}=T) when Cmd =/= quick_preview ->
                 end, St0),
     wings_view:command(Cmd, St),
     T;
-is_tweak_hotkey({select,deselect}, #tweak{palette=Pal}=T) ->
-    case orddict:find({1,{false,false,false}},Pal) of
-        {ok, Mode} when Mode =/= select ->
-            T#tweak{mode=Mode};
-        _ -> T
-    end;
+is_tweak_hotkey({select,deselect}, T) ->
+    is_tweak_combo(T);
 is_tweak_hotkey(_, T) -> T.
 
-is_tweak_combo(#tweak{palette=Pal}=T) ->
-    {B,_,_} = wings_io:get_mouse_state(),
+is_tweak_combo(#tweak{st=#st{selmode=body}}=T) -> T;
+is_tweak_combo(#tweak{palette=Pal,st=St0}=T) ->
+    {B,X,Y} = wings_io:get_mouse_state(),
     Ctrl = wings_io:is_modkey_pressed(?CTRL_BITS),
     Shift = wings_io:is_modkey_pressed(?SHIFT_BITS),
     Alt = wings_io:is_modkey_pressed(?ALT_BITS),
     case orddict:find({B,{Ctrl,Shift,Alt}},Pal) of
         {ok, Mode} when Mode =/= select ->
-            T#tweak{mode=Mode};
+            St = wings_dl:map(fun (D, _) ->
+                      update_drag(D, T#tweak{mode=Mode})  % used to find mid tweak model data
+                      end, St0),
+            T#tweak{mode=Mode,st=St,ox=X,oy=Y,cx=0,cy=0};
         _ -> T
     end.
+
+update_drag(#dlo{src_sel={Mode,Els},src_we=#we{id=Id},drag=#drag{mm=MM}}=D0,
+  #tweak{st=#st{shapes=Shs0}=St0}=T) ->
+    #dlo{src_we=We}=D1 = wings_draw:join(D0),
+    Shs = gb_trees:update(Id, We, Shs0),
+    St = St0#st{shapes=Shs},
+    Vs0 = sel_to_vs(Mode, gb_sets:to_list(Els), We),
+    Center = wings_vertex:center(Vs0, We),
+    {Vs,Magnet} = begin_magnet(T#tweak{st=St}, Vs0, Center, We),
+    D = wings_draw:split(D1, Vs, St),
+    {D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}},St}.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
