@@ -231,7 +231,6 @@ handle_tweak_drag_event(#keyboard{}=Ev, #tweak{st=St}=T0) ->
       Action ->
           is_tweak_hotkey(Action, T0)
     end,
-    do_tweak(0.0, 0.0, 0.0, 0.0, screen),
     update_tweak_handler(T);
 
 handle_tweak_drag_event(#mousebutton{button=B}=Ev, #tweak{st=St}=T) ->
@@ -1573,6 +1572,7 @@ is_tweak_combo(#tweak{palette=Pal,st=St0}=T) ->
             St = wings_dl:map(fun (D, _) ->
                       update_drag(D, T#tweak{mode=Mode})  % used to find mid tweak model data
                       end, St0),
+            do_tweak(0.0, 0.0, 0.0, 0.0, screen),
             T#tweak{mode=Mode,st=St,ox=X,oy=Y,cx=0,cy=0};
         _ -> T
     end.
