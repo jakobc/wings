@@ -34,6 +34,7 @@
      mag_rad=1.0,			% magnet influence radius
      cam,					% camera mode
      id,                    % {Id,Elem} mouse was over when tweak began
+     mag_key,				% current magnet radius adjustment hotkey
      ox,oy,					% original X,Y
      cx,cy,					% current X,Y
      st}).					% wings st record (working)
@@ -99,11 +100,29 @@ handle_tweak_event_0(#mousebutton{button=B, x=X,y=Y, mod=Mod, state=?SDL_PRESSED
 handle_tweak_event_0(_,#tweak{st=#st{selmode=body}}) ->
     next;
 
+handle_tweak_event_0(#keyboard{sym=Sym}=Ev, #tweak{st=St}=T) ->
+    Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
+    case lists:keymember(mag_adjust,1,Hotkeys) of
+      true ->
+          case wings_hotkey:event(Ev,St) of
+              {tweak,{tweak_magnet,mag_adjust}} ->
+                magnet_adjust(T#tweak{mag_key=Sym});
+              _ -> next
+          end;
+      false -> handle_tweak_event_05(Ev, T)
+    end;
+handle_tweak_event_0(_,_) ->
+    next.
+
 %% Tweak Adjust Magnet Radius: Alt + Mouse Motion
-handle_tweak_event_0(#keyboard{sym=Sym, mod=Mod},
-  #tweak{st=#st{sel=Sel0}=St0}=T0)
+handle_tweak_event_05(#keyboard{sym=Sym, mod=Mod},T)
   when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
        Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
+    magnet_adjust(T#tweak{mag_key=Sym});
+handle_tweak_event_05(_,_) ->
+    next.
+
+magnet_adjust(#tweak{st=#st{sel=Sel0}=St0}=T0) ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     case wings_pick:do_pick(X,Y,St0) of
@@ -122,10 +141,7 @@ handle_tweak_event_0(#keyboard{sym=Sym, mod=Mod},
           T = T0#tweak{id=Id,ox=GX,oy=GY,cx=0,cy=0},
           {seq,push,update_magnet_handler(T)};
       none -> next
-    end;
-handle_tweak_event_0(_,_) ->
-    next.
-
+    end.
 
 %% Tweak Select
 handle_tweak_event_1(#tweak{mode=select, ox=X, oy=Y, st=St}) ->
@@ -211,10 +227,32 @@ handle_tweak_drag_event(#keyboard{sym=$c, mod=Mod, state=?SDL_PRESSED},#tweak{ox
     wings_camera:tweak_cam(OX,OY,St);
 handle_tweak_drag_event(Ev,#tweak{st=#st{selmode=body}}=T) ->
     handle_tweak_drag_event_1(Ev,T);
-handle_tweak_drag_event(#keyboard{sym=Sym, mod=Mod}, #tweak{mode=Mode,
-  magnet=true, cx=CX, cy=CY, ox=OX, oy=OY}=T0)
+
+handle_tweak_drag_event(#keyboard{sym=Sym}=Ev, #tweak{st=St}=T) ->
+    Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
+    case lists:keymember(mag_adjust,1,Hotkeys) of
+      true ->
+          case wings_hotkey:event(Ev,St) of
+              {tweak,{tweak_magnet,mag_adjust}} ->
+                tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
+              _ ->
+                handle_tweak_drag_event_1(Ev,T)
+          end;
+      false -> handle_tweak_drag_event_05(Ev, T)
+    end;
+handle_tweak_drag_event(Ev,T) ->
+     handle_tweak_drag_event_1(Ev,T).
+
+%% Tweak Adjust Magnet Radius: Alt + Mouse Motion
+handle_tweak_drag_event_05(#keyboard{sym=Sym, mod=Mod},T)
   when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
        Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
+    tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
+handle_tweak_drag_event_05(Ev,T) ->
+     handle_tweak_drag_event_1(Ev,T).
+
+tweak_drag_mag_adjust(#tweak{mode=Mode, magnet=true,
+  cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     DX = GX-OX, %since last move X
@@ -224,9 +262,7 @@ handle_tweak_drag_event(#keyboard{sym=Sym, mod=Mod}, #tweak{mode=Mode,
     wings_io:warp(OX,OY),
     do_tweak(DX,DY,DxOrg,DyOrg,Mode),
     T = T0#tweak{cx=DxOrg,cy=DyOrg},
-    update_in_drag_radius_handler(T);
-handle_tweak_drag_event(Ev,T) ->
-     handle_tweak_drag_event_1(Ev,T).
+    update_in_drag_radius_handler(T).
 
 %% Catch hotkeys for toggling xyz constraints and magnet attributes
 handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{st=St}=T0) ->
@@ -259,9 +295,12 @@ handle_tweak_drag_event_2(Ev, #tweak{cam=Cam, st=St}=T)
 handle_tweak_drag_event_2(Ev,T) ->
     handle_tweak_drag_event_3(Ev,T).
 
-%% Mouse Button released, so we end the drag sequence.
+%% Mouse Button released, so check to end drag sequence.
 handle_tweak_drag_event_3(#mousebutton{button=B,state=?SDL_RELEASED}, T) when B =< 3->
-    end_drag(T);
+    case  wings_io:get_mouse_state() of
+      {0,_,_} -> end_drag(T);
+      _buttons_still_pressed -> keep
+    end;
 
 handle_tweak_drag_event_3(_,_) ->
     keep.
@@ -283,23 +322,29 @@ handle_magnet_event(redraw, #tweak{magnet=Mag,st=St}=T) ->
     magnet_event_no_redraw(T);
 handle_magnet_event({new_state,St}, T) ->
     end_magnet_event(T#tweak{st=St});
-handle_magnet_event(#mousemotion{mod=Mod, x=X, y=Y},
-  #tweak{magnet=true, ox=OX, oy=OY}=T)
-  when Mod band ?ALT_BITS =/= 0 ->
-    {GX,_} = wings_wm:local2global(X, Y),
-    DX = GX-OX, %since last move X
-    wings_io:warp(OX,OY),
-    update_magnet_handler(adjust_magnet_radius(DX, T));
-
+handle_magnet_event(#mousemotion{x=X, y=Y},
+  #tweak{magnet=true, mag_key=Sym, ox=OX, oy=OY}=T) ->
+    case wings_io:is_key_pressed(Sym) of
+      true ->
+          {GX,_} = wings_wm:local2global(X, Y),
+          DX = GX-OX, %since last move X
+          wings_io:warp(OX,OY),
+          update_magnet_handler(adjust_magnet_radius(DX, T));
+      false ->
+          end_magnet_event(T)
+    end;
 %% If something is pressed during magnet radius adjustment, save changes
 %% and begin new event.
+handle_magnet_event(#keyboard{sym=Sym},#tweak{mag_key=Sym}) ->
+    keep;
 handle_magnet_event(#keyboard{}=Ev,T) ->
     end_magnet_event(Ev,T);
 handle_magnet_event(#mousebutton{button=B}=Ev,#tweak{ox=X,oy=Y}=T) when B =< 3 ->
     end_magnet_event(Ev#mousebutton{x=X,y=Y},T);
 handle_magnet_event(#mousemotion{},T) ->
     end_magnet_event(T);
-handle_magnet_event(_,_) -> keep.
+handle_magnet_event(_,_) ->
+    keep.
 
 %% In-drag Event handler for magnet resize
 update_in_drag_radius_handler(T) ->
@@ -316,13 +361,17 @@ handle_in_drag_magnet_ev(redraw, #tweak{magnet=Mag,st=St}=T) ->
     tweak_magnet_radius_help(Mag),
     draw_magnet(T),
     in_drag_radius_no_redraw(T);
-handle_in_drag_magnet_ev(#mousemotion{mod=Mod, x=X, y=Y},
-  #tweak{magnet=true, ox=OX, oy=OY}=T)
-  when Mod band ?ALT_BITS =/= 0 ->
-    {GX,_} = wings_wm:local2global(X, Y),
-    DX = GX-OX, %since last move X
-    wings_io:warp(OX,OY),
-    update_in_drag_radius_handler(in_drag_adjust_magnet_radius(DX, T));
+handle_in_drag_magnet_ev(#mousemotion{x=X, y=Y}=Ev,
+  #tweak{magnet=true, mag_key=Sym, ox=OX, oy=OY}=T) ->
+    case wings_io:is_key_pressed(Sym) of
+      true ->
+          {GX,_} = wings_wm:local2global(X, Y),
+          DX = GX-OX, %since last move X
+          wings_io:warp(OX,OY),
+          update_in_drag_radius_handler(in_drag_adjust_magnet_radius(DX, T));
+      false ->
+          end_in_drag_mag_event(Ev, T)
+    end;
 handle_in_drag_magnet_ev(Ev, T) ->
     end_in_drag_mag_event(Ev, T).
 
@@ -775,7 +824,6 @@ near(Center, Vs, MagVs0, Mirror, #tweak{mag_rad=R,mag_type=Type}, We) ->
               end;
          (_, A) -> A
           end, [], MagVs),
-   % M = minus_locked_vs(M0,We),
     foldl(fun(V, A) ->
           Matrix = mirror_matrix(V, Mirror),
           Pos = wpa:vertex_pos(V, We),
@@ -1075,13 +1123,16 @@ tweak_magnet_menu() ->
       true -> {?__(2,"Enable Magnet"),
                ?__(4,"Magnet soft selection is currently disabled; click to enble Magnets.")}
     end,
+    MagAdj = {?__(5,"Radius Adjust Key"), mag_adjust,
+         ?__(6,"Press [Insert] to add a hotkey for adjusting the magnet radius. ") ++
+         ?__(7,"If no hotkey is assigned, the magnet radius adjustment key defaults to [Alt].")},
     Dome = {magnet_type(dome), dome, mag_thelp(dome),
             crossmark({dome, MagType})},
     Straight = {magnet_type(straight), straight, mag_thelp(straight),
                 crossmark({straight, MagType})},
     Spike = {magnet_type(spike), spike, mag_thelp(spike),
       crossmark({spike, MagType})},
-    [{Toggle, toggle_magnet, Help}, separator, Dome, Straight, Spike].
+    [{Toggle, toggle_magnet, Help}, MagAdj, separator, Dome, Straight, Spike].
 
 magnet_type(dome) -> ?__(1,"Dome");
 magnet_type(straight) -> ?__(2,"Straight");
@@ -1125,6 +1176,8 @@ command(toggle_tweak, St) ->
     St;
 command({tweak_magnet, toggle_magnet}, St) ->
     magnet_toggle(),
+    St;
+command({tweak_magnet, mag_adjust}, St) ->
     St;
 command({tweak_magnet, MagType}, St) ->
     set_magnet_type(MagType),
