@@ -371,11 +371,19 @@ handle_in_drag_magnet_ev(#mousemotion{x=X, y=Y}=Ev,
       false ->
           end_in_drag_mag_event(Ev, T)
     end;
-handle_in_drag_magnet_ev(Ev,#tweak{mag_key=Sym, ox=OX, oy=OY}=T) ->
-    case wings_io:is_key_pressed(Sym) of
-      true -> update_in_drag_radius_handler(T);
-      false -> end_in_drag_mag_event(Ev, T)
-    end.
+handle_in_drag_magnet_ev(#keyboard{}=Ev,#tweak{st=St}=T) ->
+    case wings_hotkey:event(Ev, St) of
+        {tweak,{tweak_magnet,reset_radius}} ->
+            Pref = wings_pref:get_value(tweak_magnet),
+            wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
+            update_in_drag_radius_handler(in_drag_adjust_magnet_radius(0,T#tweak{mag_rad=1.0}));
+        {tweak,{tweak_magnet,mag_adjust}} ->
+            keep;
+        _ ->
+            end_in_drag_mag_event(Ev, T)
+    end;
+handle_in_drag_magnet_ev(Ev,T) ->
+    end_in_drag_mag_event(Ev, T).
 
 end_in_drag_mag_event(Ev,#tweak{magnet=Mag, mag_type=MagType, mag_rad=MagR}=T) ->
     wings_pref:set_value(tweak_magnet, {Mag, MagType, MagR}),
@@ -1128,13 +1136,14 @@ tweak_magnet_menu() ->
     MagAdj = {?__(5,"Radius Adjust Key"), mag_adjust,
          ?__(6,"Press [Insert] to add a hotkey for adjusting the magnet radius. ") ++
          ?__(7,"If no hotkey is assigned, the magnet radius adjustment key defaults to [Alt].")},
+    Reset = {?__(8,"Reset Radius"), reset_radius,?__(9,"Reset the magnet radius")},
     Dome = {magnet_type(dome), dome, mag_thelp(dome),
             crossmark({dome, MagType})},
     Straight = {magnet_type(straight), straight, mag_thelp(straight),
                 crossmark({straight, MagType})},
     Spike = {magnet_type(spike), spike, mag_thelp(spike),
       crossmark({spike, MagType})},
-    [{Toggle, toggle_magnet, Help}, MagAdj, separator, Dome, Straight, Spike].
+    [{Toggle, toggle_magnet, Help}, MagAdj, Reset, separator, Dome, Straight, Spike].
 
 magnet_type(dome) -> ?__(1,"Dome");
 magnet_type(straight) -> ?__(2,"Straight");
@@ -1178,6 +1187,10 @@ command(toggle_tweak, St) ->
     St;
 command({tweak_magnet, toggle_magnet}, St) ->
     magnet_toggle(),
+    St;
+command({tweak_magnet, reset_radius}, St) ->
+    Pref = wings_pref:get_value(tweak_magnet),
+    wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
     St;
 command({tweak_magnet, mag_adjust}, St) ->
     St;
@@ -1591,6 +1604,10 @@ is_tweak_hotkey({tweak, Cmd}, T0) ->
           tweak_magnet_help(),
           setup_magnet(T),
           T;
+      {tweak_magnet,reset_radius} ->
+          Pref = wings_pref:get_value(tweak_magnet),
+          wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
+          T0#tweak{mag_rad=1.0};
       {tweak_magnet, MagType} ->
           set_magnet_type(MagType),
           {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
@@ -1613,7 +1630,8 @@ is_tweak_hotkey({view,Cmd}, #tweak{st=St0}=T) when Cmd =/= quick_preview ->
     T;
 is_tweak_hotkey({select,deselect}, T) ->
     is_tweak_combo(T);
-is_tweak_hotkey(_, T) -> T.
+is_tweak_hotkey(_, T) ->
+    is_tweak_combo(T).
 
 is_tweak_combo(#tweak{st=#st{selmode=body}}=T) -> T;
 is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
