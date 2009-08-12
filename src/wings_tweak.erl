@@ -228,12 +228,12 @@ handle_tweak_drag_event(#keyboard{sym=$c, mod=Mod, state=?SDL_PRESSED},#tweak{ox
 handle_tweak_drag_event(Ev,#tweak{st=#st{selmode=body}}=T) ->
     handle_tweak_drag_event_1(Ev,T);
 
-handle_tweak_drag_event(#keyboard{sym=Sym}=Ev, #tweak{st=St}=T) ->
+handle_tweak_drag_event(#keyboard{sym=Sym}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
           case wings_hotkey:event(Ev,St) of
-              {tweak,{tweak_magnet,mag_adjust}} ->
+              {tweak,{tweak_magnet,mag_adjust}} when Mag ->
                 tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
               _ ->
                 handle_tweak_drag_event_1(Ev,T)
@@ -251,8 +251,7 @@ handle_tweak_drag_event_05(#keyboard{sym=Sym, mod=Mod},T)
 handle_tweak_drag_event_05(Ev,T) ->
      handle_tweak_drag_event_1(Ev,T).
 
-tweak_drag_mag_adjust(#tweak{mode=Mode, magnet=true,
-  cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
+tweak_drag_mag_adjust(#tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     DX = GX-OX, %since last move X
@@ -362,7 +361,7 @@ handle_in_drag_magnet_ev(redraw, #tweak{magnet=Mag,st=St}=T) ->
     draw_magnet(T),
     in_drag_radius_no_redraw(T);
 handle_in_drag_magnet_ev(#mousemotion{x=X, y=Y}=Ev,
-  #tweak{magnet=true, mag_key=Sym, ox=OX, oy=OY}=T) ->
+  #tweak{mag_key=Sym, ox=OX, oy=OY}=T) ->
     case wings_io:is_key_pressed(Sym) of
       true ->
           {GX,_} = wings_wm:local2global(X, Y),
@@ -372,8 +371,11 @@ handle_in_drag_magnet_ev(#mousemotion{x=X, y=Y}=Ev,
       false ->
           end_in_drag_mag_event(Ev, T)
     end;
-handle_in_drag_magnet_ev(Ev, T) ->
-    end_in_drag_mag_event(Ev, T).
+handle_in_drag_magnet_ev(Ev,#tweak{mag_key=Sym, ox=OX, oy=OY}=T) ->
+    case wings_io:is_key_pressed(Sym) of
+      true -> update_in_drag_radius_handler(T);
+      false -> end_in_drag_mag_event(Ev, T)
+    end.
 
 end_in_drag_mag_event(Ev,#tweak{magnet=Mag, mag_type=MagType, mag_rad=MagR}=T) ->
     wings_pref:set_value(tweak_magnet, {Mag, MagType, MagR}),
@@ -1548,16 +1550,21 @@ tweak_magnet_help() ->
     {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
     Message = if
       Mag ->
+        Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
+        MKey = case lists:keyfind(mag_adjust,1,Hotkeys) of
+          {_, Keys} -> "[" ++ Keys ++ "]";
+          false -> wings_s:key(alt)
+        end,
         M1 = ?__(1,"Magnet: On"),
         M2 = [?__(3,"Type: "),magnet_type(MagType)],
-        M3 = [wings_s:key(alt), ": ", magnet_radius()],
+        M3 = [MKey, ": ", magnet_radius()],
         wings_msg:join([M1,M2,M3]);
       true -> ?__(2,"Magnet: Off")
     end,
     wings_wm:message_right(Message).
 
 tweak_magnet_radius_help(true) ->
-    wings_wm:message(?__(1,"Drag left or right to adjust the magnet radius."));
+    wings_wm:message(?__(1,"Drag right to increase and left to decrease the magnet radius."));
 tweak_magnet_radius_help(false) ->
     wings_wm:message(?__(2,"Magnet is currently off.")).
 
