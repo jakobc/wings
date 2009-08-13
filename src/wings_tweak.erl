@@ -58,6 +58,9 @@ init() ->
     wings_pref:set_default(tweak_magnet, TweakMagnet),
     wings_pref:set_default(tweak_help, true),
     wings_pref:set_default(tweak_xyz, [false,false,false]),
+    wings_pref:set_default(tweak_single_click,true),
+    wings_pref:set_default(tweak_double_click,true),
+    wings_pref:set_default(tweak_click_speed,200000),
     true.
 
 tweak_event(Ev, St) ->
@@ -336,8 +339,15 @@ handle_magnet_event(#mousemotion{x=X, y=Y},
 %% and begin new event.
 handle_magnet_event(#keyboard{sym=Sym},#tweak{mag_key=Sym}) ->
     keep;
-handle_magnet_event(#keyboard{}=Ev,T) ->
-    end_magnet_event(Ev,T);
+handle_magnet_event(#keyboard{}=Ev,#tweak{st=St}=T) ->
+    case wings_hotkey:event(Ev,St) of
+        {tweak,{tweak_magnet,reset_radius}} ->
+            Pref = wings_pref:get_value(tweak_magnet),
+            wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
+            update_magnet_handler(adjust_magnet_radius(0, T#tweak{mag_rad=1.0}));
+        _ ->
+            end_magnet_event(Ev,T)
+    end;
 handle_magnet_event(#mousebutton{button=B}=Ev,#tweak{ox=X,oy=Y}=T) when B =< 3 ->
     end_magnet_event(Ev#mousebutton{x=X,y=Y},T);
 handle_magnet_event(#mousemotion{},T) ->
@@ -1088,6 +1098,7 @@ menu(X, Y) ->
         wings_msg:join([[Desc,?__(14,"Paint select.")],
         [CurB, SelKey], Set, Swap, Del]), crossmark(SelKey)},
        separator,
+       {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional prefernence options for Tweak")},
        {?__(15,"Show Help Box"),show_help_box,
         ?__(16,"The on screen info which appears when any Tweak tool is activated."),
         crossmark(HelpBox)}],
@@ -1200,6 +1211,8 @@ command({tweak_magnet, MagType}, St) ->
 command(show_help_box, St) ->
     wings_pref:set_value(tweak_help, not wings_pref:get_value(tweak_help)),
     St;
+command(options_panel, St) ->
+    tweak_options_dialog(St);
 command({constrainXYZ, panel}, St) ->
     constraints_menu(St);
 command({constrainXYZ, Axis}, St) ->
@@ -1279,6 +1292,47 @@ cam_conflict() ->
     wings_u:error(?__(1,"Key combo was not assigned.\n
     That key combination would conflict with the Camera buttons")).
 
+tweak_options_dialog(St) ->
+    ClickHook = fun (is_disabled, {_Var,_I,Store}) ->
+              not ((gb_trees:get(tweak_double_click, Store)) or
+                   (gb_trees:get(tweak_single_click, Store)));
+              (_, _) -> void
+          end,
+    ClkSpd = wings_pref:get_value(tweak_click_speed)/100000,
+    Menu = [{vframe,
+      [{?__(1,"Lmb single click Selects/Deselects"),tweak_single_click},
+       {?__(2,"Lmb double click initiates Paint Select/Deselect"),tweak_double_click},
+       {hframe,[{slider,{text,ClkSpd,[{key,tweak_click_speed},{range,{1.0,3.0}},
+        {hook,ClickHook}]}}],
+       [{title,?__(3,"Click Speed")}]}
+      ]}],
+    PrefQs = [{Lbl, make_query(Ps)} || {Lbl, Ps} <- Menu],
+    wings_ask:dialog(true, ?__(4,"Tweak Preferences"), PrefQs,
+    fun(Result) -> set_values(Result), St end).
+
+make_query([_|_]=List)	->
+    [make_query(El) || El <- List];
+make_query({[_|_]=Str,Key}) ->
+    case wings_pref:get_value(Key) of
+    Def when Def == true; Def == false ->
+        {Str,Def,[{key,Key}]};
+    Def ->
+        {Str,{text,Def,[{key,Key}]}}
+    end;
+make_query({menu,List,Key}) ->
+    Def = wings_pref:get_value(Key),
+    {menu,List,Def,[{key,Key}]};
+make_query(Tuple) when is_tuple(Tuple) ->
+    list_to_tuple([make_query(El) || El <- tuple_to_list(Tuple)]);
+make_query(Other) -> Other.
+
+set_values([{tweak_click_speed = Key, Value}|Result]) ->
+    wings_pref:set_value(Key, Value*100000),
+    set_values(Result);
+set_values([{Key,Value}|Result]) ->
+    wings_pref:set_value(Key, Value),
+    set_values(Result);
+set_values([]) -> ok.
 
 constraints_menu(St) ->
     [TX, TY, TZ] = wings_pref:get_value(tweak_xyz),
