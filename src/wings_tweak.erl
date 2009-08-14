@@ -30,13 +30,14 @@
     {mode,					% current tweak tool
      palette,				% current palette of tweak modes
      magnet,				% true/false
-     mag_type=dome,			% magnet type: Type
-     mag_rad=1.0,			% magnet influence radius
+     mag_type,				% magnet type: Type
+     mag_rad,				% magnet influence radius
      cam,					% camera mode
      id,                    % {Id,Elem} mouse was over when tweak began
      mag_key,				% current magnet radius adjustment hotkey
      ox,oy,					% original X,Y
      cx,cy,					% current X,Y
+     clk,				% click/double click selection/deselection
      st}).					% wings st record (working)
 
 -record(drag,
@@ -75,10 +76,11 @@ tweak_event(Ev, St) ->
           {Mag, MagType, MagR} = wings_pref:get_value(tweak_magnet),
           case orddict:find(Cam,TweakModes) of
             {ok,Palette} ->
+                Down = now(),
                 tweak_info_line(Cam, Palette),
                 tweak_magnet_help(),
                 T = #tweak{palette=Palette, magnet=Mag, mag_type=MagType,
-                  mag_rad=MagR, cam=Cam, st=St},
+                  mag_rad=MagR, cam=Cam, clk={Down,0}, st=St},
                 handle_tweak_event_0(Ev, T);
             error ->
                 set_tweak_prefs(Cam, TweakModes),
@@ -161,7 +163,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=#st{sel=Sel0}=St0}=T0) ->
         wings_io:grab(),
         begin_drag(MM, St, T0),
         do_tweak(0.0, 0.0, 0.0, 0.0, screen),
-        T = T0#tweak{id=Id,ox=GX,oy=GY,cx=0,cy=0},
+        T = T0#tweak{id={add,Id},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       {delete, MM, #st{sel=Sel}} ->
         Id = get_id(Sel0, Sel),
@@ -169,7 +171,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=#st{sel=Sel0}=St0}=T0) ->
         wings_io:grab(),
         begin_drag(MM, St0, T0),
         do_tweak(0.0, 0.0, 0.0, 0.0, screen),
-        T = T0#tweak{id=Id,ox=GX,oy=GY,cx=0,cy=0},
+        T = T0#tweak{id={del,Id},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       none -> next
     end.
@@ -298,9 +300,14 @@ handle_tweak_drag_event_2(Ev,T) ->
     handle_tweak_drag_event_3(Ev,T).
 
 %% Mouse Button released, so check to end drag sequence.
-handle_tweak_drag_event_3(#mousebutton{button=B,state=?SDL_RELEASED}, T) when B =< 3->
+handle_tweak_drag_event_3(#mousebutton{button=B,state=?SDL_RELEASED}, #tweak{clk={Down,_}}=T) when B =< 3->
     case  wings_io:get_mouse_state() of
-      {0,_,_} -> end_drag(T);
+      {0,_,_} ->
+          Up = now(),
+          Max = wings_pref:get_value(tweak_click_speed),
+          Time = timer:now_diff(Up,Down),
+          Clk = Max - Time,
+          end_drag(T#tweak{clk=Clk});
       _buttons_still_pressed -> keep
     end;
 
@@ -469,14 +476,39 @@ begin_drag_fun(#dlo{src_sel={Mode,Els},src_we=We}=D0, MM, St, T) ->
     D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}};
 begin_drag_fun(D, _, _, _) -> D.
 
-end_drag(#tweak{mode=Mode, id={OrigId,El}, st=St0}) ->
+end_drag(#tweak{mode=Mode, id={_,{OrigId,El}}, clk=Clk, st=St0}) when Clk < 0 ->
     St = wings_dl:map(fun (#dlo{src_we=#we{id=Id}}=D, St1) ->
+                  if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
+                  end_drag(Mode, D, St1)
+                end, St0),
+    wings_wm:later({new_state,St}),
+    pop;
+
+end_drag(#tweak{mode=Mode, id={P,{OrigId,El}}, ox=X,oy=Y,cx=Cx,cy=Cy, st=St0}) ->
+    Dist = math:sqrt(Cx * Cx + Cy * Cy),
+    SCS = wings_pref:get_value(tweak_single_click),
+    St = wings_dl:map(fun
+            (#dlo{src_we=#we{id=Id}}=D,St1) when abs(Dist) < 5, SCS ->
+                  if OrigId =:= Id ->
+                         wings_wm:release_focus(),
+                         wings_io:ungrab(X,Y);
+                     true -> ok
+                  end,
+                  end_pick(P, OrigId, El, D, St1);
+            (#dlo{src_we=#we{id=Id}}=D,St1) ->
                   if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
                   end_drag(Mode, D, St1)
                 end, St0),
     wings_wm:later({new_state,St}),
     pop.
 
+%% end single click pick
+end_pick(del, Id, El, #dlo{src_sel={Mode, Sel}, src_we=#we{id=Id}}=D, St0) ->
+    {D,St0#st{selmode=Mode, sel=[{Id, gb_sets:subtract(Sel,El)}]}};
+end_pick(_, _, _, #dlo{src_sel={Mode, Sel}, src_we=#we{id=Id}}=D, St0) ->
+    {D,St0#st{selmode=Mode, sel=[{Id, Sel}]}}.
+
+%% update
 end_drag(update, #dlo{src_sel={Mode,Sel}, src_we=#we{id=Id},drag={matrix,_,Matrix,_}}=D,
         #st{shapes=Shs0}=St0) ->
     We0 = gb_trees:get(Id, Shs0),
@@ -489,6 +521,8 @@ end_drag(update, #dlo{src_sel={Mode,Sel},src_we=#we{id=Id}}=D0, #st{shapes=Shs0}
     Shs = gb_trees:update(Id, We, Shs0),
     St = St0#st{shapes=Shs},
     {D0,St#st{selmode=Mode,sel=[{Id,Sel}]}};
+
+%% tweak modes
 end_drag(_, #dlo{src_we=#we{id=Id},drag={matrix,_,Matrix,_}}=D,
         #st{shapes=Shs0}=St0) ->
     We0 = gb_trees:get(Id, Shs0),
@@ -990,16 +1024,17 @@ add_constraints([],[]) -> [].
 
 show_cursor(_, #dlo{src_we=#we{id=Id}, drag={matrix,Pos,_,_}}) ->
     Matrices = wings_u:get_matrices(Id, original),
-    show_cursor_1(Matrices, Pos);
+    {X0,Y0,_} = obj_to_screen(Matrices, Pos),
+    show_cursor_1(X0,Y0);
 show_cursor(El, #dlo{src_sel={Mode,_},src_we=#we{id=Id}=We,drag=#drag{mm=MM}}) ->
     Vs0 = sel_to_vs(Mode, gb_sets:to_list(El), We),
     Center = wings_vertex:center(Vs0, We),
     Matrices = wings_u:get_matrices(Id, MM),
-    show_cursor_1(Matrices, Center).
+    {X0,Y0,_} = obj_to_screen(Matrices, Center),
+    show_cursor_1(X0,Y0).
 
-show_cursor_1(Matrices, Pos) ->
+show_cursor_1(X0,Y0) ->
     {W,H} = wings_wm:win_size(),
-    {X0,Y0,_} = obj_to_screen(Matrices, Pos),
     {X1,Y1} = {trunc(X0), H - trunc(Y0)},
     X2 = if X1 < 0 -> 20;
             X1 > W -> W-20;
