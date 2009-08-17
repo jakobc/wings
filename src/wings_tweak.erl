@@ -37,7 +37,7 @@
      mag_key,				% current magnet radius adjustment hotkey
      ox,oy,					% original X,Y
      cx,cy,					% current X,Y
-     clk,				% click/double click selection/deselection
+     clk,					% click selection/deselection
      st}).					% wings st record (working)
 
 -record(drag,
@@ -48,8 +48,8 @@
      mm}).				%original|mirror
 
 -record(mag,
-    {orig,			%Orig pos of vertex being moved.
-     vs,			%[{V,Pos,Distance,Influence}](not changed while dragging)
+    {orig,			%Orig centre of the selection being moved
+     vs,			%[{V,Pos,Distance,Influence}]
      vtab=[]}).		%[{V,Pos}] (latest)
 
 
@@ -242,17 +242,25 @@ handle_tweak_drag_event(#keyboard{sym=$\s}=Ev, #tweak{st=St}=T0) ->
 handle_tweak_drag_event(Ev,#tweak{st=#st{selmode=body}}=T) ->
     handle_tweak_drag_event_1(Ev,T);
 
-handle_tweak_drag_event(#keyboard{sym=Sym}=Ev, #tweak{magnet=Mag,st=St}=T) ->
+handle_tweak_drag_event(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
           case wings_hotkey:event(Ev,St) of
-              {tweak,{tweak_magnet,mag_adjust}} when Mag ->
+              {tweak,{tweak_magnet,mag_adjust}}=Cmd when Mag ->
+                B = wings_hotkey:bindkey(Ev, Cmd),
+                Sym = case B of
+                    {_,_,{K,_}} -> K;
+                    {_,{K,_}} -> K;
+                    {_,_,K} -> K;
+                    {_,K} -> K
+                end,
                 tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
               _ ->
                 handle_tweak_drag_event_1(Ev,T)
           end;
-      false -> handle_tweak_drag_event_05(Ev, T)
+      false ->
+          handle_tweak_drag_event_05(Ev, T)
     end;
 handle_tweak_drag_event(Ev,T) ->
      handle_tweak_drag_event_1(Ev,T).
@@ -497,16 +505,17 @@ end_drag(#tweak{mode=Mode, id={_,{OrigId,El}}, clk=Clk, st=St0}) when Clk < 0 ->
     pop;
 
 end_drag(#tweak{mode=Mode, id={P,{OrigId,El}}, ox=X,oy=Y,cx=Cx,cy=Cy, st=St0}) ->
-    Dist = math:sqrt(Cx * Cx + Cy * Cy),
+    Dist = abs(math:sqrt(Cx * Cx + Cy * Cy)),
     SCS = wings_pref:get_value(tweak_single_click),
     St = wings_dl:map(fun
-            (#dlo{src_we=#we{id=Id}}=D,St1) when abs(Dist) < 5, SCS ->
+            (#dlo{src_we=#we{id=Id}}=D,St1) when Dist < 5, SCS ->
                   if OrigId =:= Id ->
                          wings_wm:release_focus(),
-                         wings_io:ungrab(X,Y);
-                     true -> ok
-                  end,
-                  end_pick(P, OrigId, El, D, St1);
+                         wings_io:ungrab(X,Y),
+                         end_pick(P, OrigId, El, D, St1);
+                     true ->
+                         {D,St1}
+                  end;
             (#dlo{src_we=#we{id=Id}}=D,St1) ->
                   if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
                   end_drag(Mode, D, St1)
@@ -515,10 +524,28 @@ end_drag(#tweak{mode=Mode, id={P,{OrigId,El}}, ox=X,oy=Y,cx=Cx,cy=Cy, st=St0}) -
     pop.
 
 %% end single click pick
-end_pick(del, Id, El, #dlo{src_sel={Mode, Sel}, src_we=#we{id=Id}}=D, St0) ->
-    {D,St0#st{selmode=Mode, sel=[{Id, gb_sets:subtract(Sel,El)}]}};
-end_pick(_, _, _, #dlo{src_sel={Mode, Sel}, src_we=#we{id=Id}}=D, St0) ->
-    {D,St0#st{selmode=Mode, sel=[{Id, Sel}]}}.
+end_pick(del, Id, _, D, #st{selmode=body,sel=Sel0}=St) ->
+    Sel = lists:sort(orddict:erase(Id,Sel0)),
+    {D#dlo{vs=none,sel=none,drag=none}, St#st{selmode=body,sel=Sel,sh=false}};
+end_pick(del, Id, El0, #dlo{src_sel={Mode,_}}=D, #st{sel=Sel0}=St) ->
+    El1 = orddict:fetch(Id,Sel0),
+    El = gb_sets:subtract(El1,El0),
+    Sel = case gb_sets:is_empty(El) of
+        false ->
+          lists:sort(orddict:store(Id,El,Sel0));
+        true -> lists:sort(orddict:erase(Id,Sel0))
+    end,
+    {D#dlo{vs=none,sel=none,drag=none}, St#st{selmode=Mode,sel=Sel,sh=false}};
+end_pick(_, Id, El0, #dlo{src_sel={Mode,_}}=D, #st{sel=Sel0}=St) ->
+    El = case orddict:find(Id,Sel0) of
+        {ok, El1} ->
+            gb_sets:union(El1,El0);
+        error ->
+            El0
+    end,
+    Sel = lists:sort(orddict:store(Id,El,Sel0)),
+    {D#dlo{vs=none,sel=none,drag=none}, St#st{selmode=Mode,sel=Sel,sh=false}};
+end_pick(_,_,_,D,St) -> {D,St}.
 
 %% update
 end_drag(update, #dlo{src_sel={Mode,Sel}, src_we=#we{id=Id},drag={matrix,_,Matrix,_}}=D,
@@ -600,7 +627,7 @@ do_tweak(#dlo{drag={matrix,Pos0,Matrix0,_},src_we=#we{id=Id}}=D0,
     Matrix = e3d_mat:mul(e3d_mat:translate(Move), Matrix0),
     D0#dlo{drag={matrix,Pos,Matrix,e3d_mat:expand(Matrix)}};
 do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
-          src_we=#we{id=Id}=We}=D0, DX, DY, DxOrg, DyOrg, Mode) ->
+          src_we=#we{id=Id}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
     Matrices = wings_u:get_matrices(Id, MM),
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
@@ -621,12 +648,12 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
         zxmove -> Pos = {Tx,Py,Tz},
               magnet_tweak(Mag0, Pos);
         relax -> Pos = TweakPos,
-              Len = (abs(DxOrg) + abs(DyOrg)) / 200.0,
+              Len = abs(DxOrg) / 600.0,
               Len1 = case Len > 1 of
                    true -> 1.0;
                    false -> Len
               end,
-              relax_magnet_tweak_fn(Mag0, Pos,We,Len1);
+              relax_magnet_tweak_fn(Mag0, Pos, We, Len1);
         slide -> Pos = TweakPos,
               magnet_tweak_slide_fn(Mag0, We,Orig,TweakPos);
         slide_collapse -> Pos = TweakPos,
@@ -643,7 +670,6 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
 do_tweak(D, _, _, _, _, _) -> D.
 
 
-
 %%%% Relax
 relax_vec_fn(V, #we{}=We,Pos0,Weight) ->
     Vec = relax_vec(V,We),
@@ -656,7 +682,8 @@ relax_vec(V, We) ->
         %% Because of hidden faces there may be no neighbouring vertices,
         %% so we default to the position of the vertex itself.
         wings_vertex:pos(V, We);
-    Cs ->
+    Cs0 ->
+        Cs = [C || C <- Cs0, C =/= undefined],
         e3d_vec:average(Cs)
     end.
 collect_neib_verts_coor(V,We)->
@@ -669,7 +696,9 @@ collect_neib_verts_coor(V,We)->
 slide_vec_w(V, Vpos, VposS, TweakPosS, We, W,Vs) ->
     Dv = e3d_vec:sub(VposS,Vpos),
     TweakPos = e3d_vec:sub(TweakPosS, Dv),
-    Cs = sub_pos_from_list(collect_neib_verts_coor_vs(V, We, Vs), Vpos),
+    Cs0 = collect_neib_verts_coor_vs(V, We, Vs),
+    Cs1 = [C || C <- Cs0, C =/= undefined],
+    Cs = sub_pos_from_list(Cs1, Vpos),
     TweakPos2=e3d_vec:add(Vpos, e3d_vec:mul(e3d_vec:sub(TweakPos, Vpos), W)),
     slide_one_vec(Vpos, TweakPos2, Cs).
 
@@ -838,7 +867,7 @@ setup_magnet(#tweak{mode=Mode, cx=X, cy=Y}=T) ->
     T.
 
 setup_magnet_fun(#dlo{src_sel={_,_},drag=#drag{vs=Vs0,pos0=Center}=Drag}=Dl0,
-         #tweak{st=St}=T) ->
+  #tweak{st=St}=T) ->
     We = wings_draw:original_we(Dl0),
     {Vs,Mag} = begin_magnet(T, Vs0, Center, We),
     Dl = wings_draw:split(Dl0, Vs, St),
@@ -1207,7 +1236,7 @@ menu(X, Y) ->
         wings_msg:join([[Desc,?__(13,"Constrain drag to selection's average plane.")],
         [CurB, TKey], Set, Swap, Del]), crossmark(TKey)},
        {mode(select),tweak_menu_fun(select),
-        wings_msg:join([[Desc,?__(14,"Paint select.")],
+        wings_msg:join([[Desc,?__(14,"Paint selection.")],
         [CurB, SelKey], Set, Swap, Del]), crossmark(SelKey)},
        separator,
        {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional prefernence options for Tweak")},
@@ -1222,7 +1251,7 @@ mode(relax) -> ?__(3,"Relax");
 mode(slide) -> ?__(4,"Slide");
 mode(slide_collapse) -> ?__(5,"Slide Collapse");
 mode(tangent) -> ?__(6,"Tangent Plane");
-mode(select) -> ?__(7,"Select").
+mode(select) -> ?__(7,"Paint Select").
 
 tweak_menu_fun(Mode) ->
     fun
@@ -1502,6 +1531,7 @@ default_prefs(_) -> % when wings_cam, blender, sketchup, nendo, mirai, tds
 
 %% Tweak Mode info line
 tweak_info_line(Cam, D) ->
+    M0 = click_select(),
     M1 = compose_info_line(D),
     Rmb = button(3) ++ ": ",
     TMenu = ?__(2,"Tweak menu"),
@@ -1510,7 +1540,7 @@ tweak_info_line(Cam, D) ->
         maya -> [modifier({true,f,f}), Rmb, TMenu];
         _ -> [modifier({f,f,true}), Rmb, TMenu]
     end,
-    Message = wings_msg:join([M1,M3,M4]),
+    Message = wings_msg:join([M0,M1,M3,M4]),
     wings_wm:message(Message).
 
 %% Go through list of user defined keys and tweak tool, and build an info line
@@ -1525,6 +1555,12 @@ compose_info_line([]) -> [].
 button(1) -> wings_s:lmb();
 button(2) -> wings_s:mmb();
 button(3) -> wings_s:rmb().
+
+click_select() ->
+    case wings_pref:get_value(tweak_single_click) of
+      true -> ?__(1,"L: Click Select");
+      false -> []
+    end.
 
 %%%
 %%%% Info box
