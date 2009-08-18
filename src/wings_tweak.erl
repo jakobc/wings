@@ -61,6 +61,7 @@ init() ->
     wings_pref:set_default(tweak_xyz, [false,false,false]),
     wings_pref:set_default(tweak_single_click,true),
     wings_pref:set_default(tweak_click_speed,200000),
+    wings_pref:set_default(tweak_mag_adj_sensitivity,0.01),
     true.
 
 tweak_event(Ev, St) ->
@@ -456,14 +457,14 @@ begin_magnet_adjustment_fun(#dlo{src_sel={Mode,Els},src_we=We}=D, MM) ->
 begin_magnet_adjustment_fun(D, _) -> D.
 
 adjust_magnet_radius(MouseMovement, #tweak{mag_rad=Falloff0,st=St}=T0) ->
-    case Falloff0 + MouseMovement * 0.01 of
+    case Falloff0 + MouseMovement * wings_pref:get_value(tweak_mag_adj_sensitivity) of
     Falloff when Falloff > 0 ->
         T0#tweak{mag_rad=Falloff,st=St};
     _otherwise -> T0#tweak{st=St}
     end.
 
 in_drag_adjust_magnet_radius(MouseMovement, #tweak{mag_rad=Falloff0,st=St}=T0) ->
-    case Falloff0 + MouseMovement * 0.01 of
+    case Falloff0 + MouseMovement * wings_pref:get_value(tweak_mag_adj_sensitivity) of
     Falloff when Falloff > 0 ->
         setup_magnet(T0#tweak{mag_rad=Falloff,st=St});
     _otherwise -> T0#tweak{st=St}
@@ -1437,17 +1438,18 @@ cam_conflict() ->
 %%%
 tweak_options_dialog(St) ->
     ClickHook = fun (is_disabled, {_Var,_I,Store}) ->
-              not (%(gb_trees:get(tweak_double_click, Store)) or
-                   (gb_trees:get(tweak_single_click, Store)));
+              not (gb_trees:get(tweak_single_click, Store));
               (_, _) -> void
           end,
     ClkSpd = wings_pref:get_value(tweak_click_speed)/100000,
+    MagAdj = wings_pref:get_value(tweak_mag_adj_sensitivity)*100.0,
     Menu = [{vframe,
       [{?__(1,"Lmb single click Selects/Deselects"),tweak_single_click},
-      %{?__(2,"Lmb double click initiates Paint Select/Deselect"),tweak_double_click},
        {hframe,[{slider,{text,ClkSpd,[{key,tweak_click_speed},{range,{1.0,3.0}},
         {hook,ClickHook}]}}],
-       [{title,?__(3,"Click Speed")}]}
+       [{title,?__(3,"Click Speed")}]},
+       {hframe,[{slider,{text,MagAdj,[{key,tweak_mag_adj_sensitivity},{range,{0.1,2.0}}]}}],
+       [{title,?__(5,"Magnet Adjust Sensitivity")}]}
       ]}],
     PrefQs = [{Lbl, make_query(Ps)} || {Lbl, Ps} <- Menu],
     wings_ask:dialog(true, ?__(4,"Tweak Preferences"), PrefQs,
@@ -1472,6 +1474,10 @@ make_query(Other) -> Other.
 set_values([{tweak_click_speed = Key, Value}|Result]) ->
     wings_pref:set_value(Key, Value*100000),
     set_values(Result);
+set_values([{tweak_mag_adj_sensitivity = Key, Value}|Result]) ->
+    wings_pref:set_value(Key, Value/100.0),
+    set_values(Result);
+
 set_values([{Key,Value}|Result]) ->
     wings_pref:set_value(Key, Value),
     set_values(Result);
