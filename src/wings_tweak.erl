@@ -1031,7 +1031,7 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 %%%
 %%%% Hotkey and Combo Checking
 %%%
-is_tweak_hotkey({tweak, Cmd}, #tweak{magnet=Magnet}=T0) ->
+is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet}=T0) ->
     case Cmd of
       {constrainXYZ, panel} -> T0;
       {constrainXYZ, Axis} ->
@@ -1057,7 +1057,10 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{magnet=Magnet}=T0) ->
           T;
       {Mode,1} when Mode =:= screen; Mode =:= normal; Mode =:= slide;
         Mode =:= slide_collapse; Mode =:= relax; Mode =:= tangent ->
-          T0#tweak{mode=Mode};
+        set_tweak_pref(Mode, 1, {false, false, false}),
+        {_,Prefs} = wings_pref:get_value(tweak_prefs),
+        Palette = orddict:fetch(Cam,Prefs),
+        is_tweak_combo(T0#tweak{palette=Palette});
       _ ->
         T0
     end;
