@@ -1631,7 +1631,9 @@ help_msg_hotkeys() ->
      ?__(3,"As long as the current mouse button is held down, the current tool will remain active.")].
 
 help_msg_magnet_radius() ->
-     ?__(1,"To adjust the Magnet Radius, first release any modifier keys, and then press [Alt].").
+     [?__(1,"To adjust the Magnet Radius, first release any modifier keys, and then press [Alt]."),
+      ?__(2,"The Magnet Adjust key can be changed by Inserting a hotkey."),
+      ?__(3,"The adjustment increment can be set in the Tweak Preferences.")].
 
 help_msg_magnet_hotkeys() ->
     [?__(1,"You can setup hotkeys in the Tweak menu for turning the magnet on or off, or changing the magnet type while tweaking."),
@@ -1639,10 +1641,13 @@ help_msg_magnet_hotkeys() ->
      ?__(3,"If these keys are set, you can call them in mid drag to see how the different magnet options affect the result.")].
 
 help_msg_tool_change() ->
-   [?__(1,"There a few ways you can switch between the various tweak tools:\n"),
-    ?__(2,"\t-Using the Tweak menu and selecting a tool with the Lmb will bind Lmb to that tool's action while Tweak is enabled.\n"),
-    ?__(3,"\t-If a modifier key combo has been set to a tools in the Tweak Menu, you can call these by pressing the appropriate buttons while draging.\n"),
-    ?__(4,"\t-Using a hotkey assigned by the Insert method, will switch the Lmb's function to that tool when called (even during tweak).")].
+   [?__(1,"There are various ways to switch Tweak tools on the fly:\n"),
+    ?__(2,"\t-Use the Tweak menu to select a tool by pressing Lmb."),
+    ?__(3,"This will bind Lmb to that tool.\n"),
+    ?__(5,"\t-Press a hotkey assigned to any Tweak tool via the Insert method."),
+    ?__(6,"This switches Lmb's current function to that tool, even when called during a tweak drag."),
+    ?__(4,"\t-Press any modifier key combo that has been bound to a tool in the Tweak Menu."),
+    ?__(7,"\t-Selecting a tool via the Tweak Palette which can be left open.")].
 
 help_msg_deselect() ->
     [?__(1,"Press Spacebar to return to the tool assigned to Lmb."),
@@ -1953,9 +1958,9 @@ draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, curren
 draw_tweak_menu_items([{Name,{_,{Mode,_}},_}|Menu], Y, #tw{lh=Lh, w=W,lmb=Mode}=Tw) ->
     {R,G,B,A} = wings_pref:get_value(menu_color),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
-    wings_io:sunken_rect(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
-    {Rt,Gt,Bt} = wings_pref:get_value(menu_hilited_text),
-    wings_io:set_color({Rt*0.8,Gt*0.8,Bt*0.8}),
+    wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
+    Col = wings_pref:get_value(menu_hilited_text),
+    wings_io:set_color(Col),
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
