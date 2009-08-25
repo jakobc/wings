@@ -711,6 +711,9 @@ command_1({window,palette}, St) ->
 command_1({window,console}, _St) ->
     wings_console:window(),
     keep;
+command_1({window,tweak_palette}, _St) ->
+    wings_tweak:window(),
+    keep;
 
 %% Body menu.
 command_1({body,Cmd}, St) ->
@@ -901,6 +904,8 @@ window_menu(_) ->
      {Name,object,
       ?__(5,"Open a Geometry Graph window (showing objects)")},
      {?__(6,"Palette"), palette,?__(7,"Open the color palette window")},
+     {?__(12,"Tweak Palette"), tweak_palette,
+      ?__(13,"Open a palette from which tweak tools may be selected or bound to modifier keys")},
      separator,
      {?__(8,"New Geometry Window"),geom_viewer, ?__(9,"Open a new Geometry window")},
      {?__(10,"Console"),console,?__(11,"Open a console window for information messages")}].
@@ -1486,6 +1491,8 @@ save_windows_1([console|Ns]) ->
     save_window(console, Ns);
 save_windows_1([palette|Ns]) ->
     save_window(palette, Ns);
+save_windows_1([tweak_palette|Ns]) ->
+    save_window(tweak_palette, Ns);
 save_windows_1([outliner|Ns]) ->
     save_window(outliner, Ns);
 save_windows_1([{object,_}=N|Ns]) ->
@@ -1563,6 +1570,9 @@ restore_windows_1([{console,{_,_}=Pos,{_,_}=Size}|Ws], St) ->
     restore_windows_1(Ws, St);
 restore_windows_1([{palette,{_,_}=Pos,{_,_}=Size}|Ws], St) ->
     wings_palette:window(validate_pos(Pos),Size,St),
+    restore_windows_1(Ws, St);
+restore_windows_1([{tweak_palette,{_,_}=Pos,_}|Ws], St) ->
+    wings_tweak:window(Pos),
     restore_windows_1(Ws, St);
 restore_windows_1([_|Ws], St) ->
     restore_windows_1(Ws, St);

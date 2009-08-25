@@ -14,7 +14,7 @@
 
 -export([init/0,command/2]).
 -export([tweak_event/2,menu/2]).
-
+-export([window/0,window/1]).
 -define(NEED_OPENGL, 1).
 -define(NEED_ESDL, 1).
 
@@ -1192,8 +1192,13 @@ get_id(Sel0, Sel) ->
 %%%
 %%%% Tweak Menu
 %%%
+
 menu(X, Y) ->
+    Menu = menu(),
     Owner = wings_wm:this(),
+    wings_menu:menu(X, Y, Owner, tweak, Menu).
+
+menu() ->
     SetB = {bold,?__(20,"Set Binding: ")},
     SwpB = {bold,?__(21,"Swap Bindings: ")},
     Set = [SetB, ?__(1,"Hold modifiers and/or press any mouse button.")],
@@ -1247,7 +1252,7 @@ menu(X, Y) ->
        {?__(15,"Show Help Box"),show_help_box,
         ?__(16,"The on screen info which appears when any Tweak tool is activated."),
         crossmark(HelpBox)}],
-    wings_menu:menu(X, Y, Owner, tweak, Menu).
+    Menu.
 
 mode(screen) -> ?__(1,"Move");
 mode(normal) -> ?__(2,"Normal");
@@ -1801,3 +1806,176 @@ set_magnet_type(MagType) ->
 
 save_magnet_prefs(#tweak{magnet=Mag, mag_type=MT, mag_rad=MagR}) ->
     wings_pref:set_value(tweak_magnet, {Mag, MT, MagR}).
+
+%%%
+%%% Tweak window.
+%%%
+-record(tw,
+	{n,						% Menu Items.
+	 lh,					% Line height.
+	 menu,					% menu items.
+	 w,						% Menu width in pixels
+	 h,						% Menu height in pixels
+	 active,				% Tweak 'active'|'inactive'
+	 current,				% currently hilighted menu item.
+	 lmb,					% tool assigned to lmb.
+	 mag					% magnet status.
+	}).
+
+window() ->
+    case wings_wm:is_window(tweak_palette) of
+	true ->
+	    wings_wm:raise(tweak_palette),
+	    keep;
+	false ->
+	    Pos = {5,55},
+	    window(Pos),
+	    keep
+    end.
+
+window(Pos) ->
+    Cw = ?CHAR_WIDTH,
+    Lh = ?LINE_HEIGHT,
+    Menu = valid_menu_items(menu()),
+    N = length(Menu),
+    W = max_width(Menu, 0),
+    Height = Lh * N + 4,
+    Width = Cw * W + (Cw*2),
+    Size = {Width, Height},
+    Magnet = wings_pref:get_value(tweak_magnet),
+    {Tweak, Mode} = tweak_tool(1, {false, false, false}),
+    Tw = #tw{h=Height, w=Width, menu=Menu, active=Tweak, n=N, current=[], lh=Lh, lmb=Mode, mag=Magnet},
+    Props = [{display_lists,geom_display_lists}],
+    Op = {seq,push,get_event(Tw)},
+    wings_wm:toplevel(tweak_palette, tweak_palette_title(), Pos, Size,
+		      [closable,{properties,Props}], Op).
+
+max_width([{MenuItem,_,_}|Tm], L0) ->
+    L1 = length(MenuItem),
+    L2 = if L1 > L0 -> L1; true -> L0 end,
+    max_width(Tm, L2);
+max_width([],L) -> L.
+
+tweak_tool(Button, Modifiers) ->
+    {Tweak, Modes} = wings_pref:get_value(tweak_prefs),
+    Cam = wings_pref:get_value(camera_mode),
+    Mode = case orddict:find(Cam,Modes) of
+            {ok,Palette} ->
+                case orddict:find({Button,Modifiers},Palette) of
+                  {ok,TMode} -> TMode;
+                  error -> none
+                end;
+            error ->
+                none
+          end,
+    {Tweak, Mode}.
+
+
+tweak_palette_title() ->
+    ?__(1,"Tweak").
+
+get_event(Tw) ->
+    {replace,fun(Ev) -> event(Ev, Tw) end}.
+
+event(redraw, #tw{w=W,h=H}=Tw) ->
+    wings_io:ortho_setup(),
+    wings_io:border(0, 0, W-1, H-1, wings_pref:get_value(menu_color)),
+    draw_tweak_palette(Tw),
+    keep;
+event({current_state,_}, Tw0) ->
+    Tw = update_tweak_palette(Tw0),
+    Menu = valid_menu_items(menu()),
+    {Tweak, Mode} = tweak_tool(1, {false, false, false}),
+    wings_wm:dirty(),
+    get_event(Tw#tw{menu=Menu,lmb=Mode,active=Tweak});
+event(close, _) ->
+    delete;
+event(#mousemotion{x=X,y=Y}, Tw) ->
+    mousemotion(X, Y, Tw);
+event(#mousebutton{button=1,mod=0,state=?SDL_RELEASED}, #tw{current=Mode}=Tw)->
+    set_tweak_pref(Mode, 1, {false,false,false}),
+    Menu = valid_menu_items(menu()),
+    wings_wm:dirty(),
+    get_event(Tw#tw{menu=Menu,lmb=Mode});
+event(#mousebutton{button=B,mod=Mod,state=?SDL_RELEASED}, #tw{current=Mode}=Tw) when B =< 3 ->
+    Ctrl = Mod band ?CTRL_BITS =/= 0,
+    Shift = Mod band ?SHIFT_BITS =/= 0,
+    Alt = Mod band ?ALT_BITS =/= 0,
+    set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
+    Menu = valid_menu_items(menu()),
+    wings_wm:dirty(),
+    get_event(Tw#tw{menu=Menu});
+
+event(lost_focus, Tw) ->
+    wings_wm:dirty(),
+    get_event(Tw#tw{current=[]});
+
+event(_,_) ->
+    keep.
+
+mousemotion(X, Y, Tw0) ->
+    Tw = update_highlight(X, Y, Tw0),
+    wings_wm:dirty(),
+    get_event(Tw).
+
+valid_menu_items([I|Menu]) ->
+    case I of
+      {Name,Cmd,Help,_} when is_function(Cmd) -> %% menu format
+        C = Cmd(1,[]), %% change fun to cmd name.. 1 is for lmb
+        [{Name,C,Help}|valid_menu_items(Menu)];
+      _ ->
+        valid_menu_items(Menu)
+    end;
+valid_menu_items([]) -> [].
+
+draw_tweak_palette(#tw{menu=Menu,lh=Lh}=Tw) ->
+    draw_tweak_menu_items(Menu, Lh, Tw).
+
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, lmb=Mode}=Tw) ->
+    {R,G,B} = wings_pref:get_value(menu_hilite),
+    {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
+    wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
+    wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    Ly = Y + Lh,
+    wings_wm:message(Help),
+    draw_tweak_menu_items(Menu, Ly, Tw);
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, current=Mode}=Tw) ->
+    Colour = wings_pref:get_value(menu_hilite),
+    {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
+    wings_io:set_color(wings_pref:get_value(menu_hilite)),
+    wings_io:gradient_rect(X1, Y1, X2-X1, Y2-Y1, Colour),
+    wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    Ly = Y + Lh,
+    wings_wm:message(Help),
+    draw_tweak_menu_items(Menu, Ly, Tw);
+draw_tweak_menu_items([{Name,{_,{Mode,_}},_}|Menu], Y, #tw{lh=Lh, w=W,lmb=Mode}=Tw) ->
+    {R,G,B,A} = wings_pref:get_value(menu_color),
+    {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
+    wings_io:sunken_rect(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
+    {Rt,Gt,Bt} = wings_pref:get_value(menu_hilited_text),
+    wings_io:set_color({Rt*0.8,Gt*0.8,Bt*0.8}),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    Ly = Y + Lh,
+    draw_tweak_menu_items(Menu, Ly, Tw);
+draw_tweak_menu_items([{Name,_,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
+    wings_io:set_color(wings_pref:get_value(menu_text)),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    Ly = Y + Lh,
+    draw_tweak_menu_items(Menu, Ly, Tw);
+draw_tweak_menu_items([], _, _) -> ok.
+
+update_highlight(_X, Y, #tw{menu=Menu,n=N,lh=Lh}=Tw) ->
+    Selected0 = ((Y+2) div Lh) + 1,
+    Selected = case Selected0 + 1 > N of
+      true -> N;
+      false -> Selected0
+    end,
+    {_,{_,{Mode,_}},_} = lists:nth(Selected,Menu),
+    Tw#tw{current=Mode}.
+
+
+update_tweak_palette(Tw) ->
+    {Tweak, Mode} = tweak_tool(1, {false, false, false}),
+    Tw#tw{active=Tweak,lmb=Mode}.
