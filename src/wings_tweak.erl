@@ -13,7 +13,7 @@
 -module(wings_tweak).
 
 -export([init/0,command/2]).
--export([tweak_event/2,menu/2]).
+-export([tweak_event/2,menu/2,tweak_buttons/0]).
 -export([window/0,window/1]).
 -define(NEED_OPENGL, 1).
 -define(NEED_ESDL, 1).
@@ -57,7 +57,7 @@ init() ->
     set_default_tweak_prefs(wings_pref:get_value(camera_mode)),
     TweakMagnet = {true, dome, 1.0},  %{magnet on, magnet type, magnet radius}
     wings_pref:set_default(tweak_magnet, TweakMagnet),
-    wings_pref:set_default(tweak_help, true),
+    wings_pref:delete_value(tweak_help),
     wings_pref:set_default(tweak_xyz, [false,false,false]),
     wings_pref:set_default(tweak_single_click,true),
     wings_pref:set_default(tweak_click_speed,200000),
@@ -105,7 +105,7 @@ handle_tweak_event_0(#mousebutton{button=B, x=X,y=Y, mod=Mod, state=?SDL_PRESSED
 handle_tweak_event_0(_,#tweak{st=#st{selmode=body}}) ->
     next;
 
-handle_tweak_event_0(#keyboard{sym=Sym}=Ev, #tweak{st=St}=T) ->
+handle_tweak_event_0(#keyboard{sym=Sym}=Ev, #tweak{magnet=true,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
@@ -120,7 +120,7 @@ handle_tweak_event_0(_,_) ->
     next.
 
 %% Tweak Adjust Magnet Radius: Alt + Mouse Motion
-handle_tweak_event_05(#keyboard{sym=Sym, mod=Mod},T)
+handle_tweak_event_05(#keyboard{sym=Sym, mod=Mod},#tweak{magnet=true}=T)
   when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
        Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     magnet_adjust(T#tweak{mag_key=Sym});
@@ -188,8 +188,8 @@ tweak_drag_no_redraw(T) ->
 
 handle_tweak_drag_event(redraw, #tweak{mode=Mode,st=St}=T) ->
     redraw(St),
+    tweak_buttons(),
     mode_message(Mode),
-    info_box(help_msg()),
     tweak_drag_no_redraw(T);
 handle_tweak_drag_event(#mousemotion{x=X, y=Y},
             #tweak{mode=screen, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
@@ -230,12 +230,15 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
 handle_tweak_drag_event(#keyboard{sym=$c, mod=Mod},#tweak{ox=OX, oy=OY, st=St})
     when Mod band (?ALT_BITS bor ?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     wings_camera:tweak_cam(OX,OY,St);
-handle_tweak_drag_event(#keyboard{sym=$\s}=Ev, #tweak{st=St}=T0) ->
+%% Spacebar gets special handeling
+handle_tweak_drag_event(#keyboard{sym=$\s}=Ev, #tweak{magnet=Mag,st=St}=T0) ->
     case wings_hotkey:event(Ev, St) of
       next ->
           update_tweak_handler(is_tweak_combo(T0));
       {tweak,{tweak_magnet,mag_adjust}} ->
-          tweak_drag_mag_adjust(T0#tweak{mag_key=$\s});
+          if Mag -> tweak_drag_mag_adjust(T0#tweak{mag_key=$\s});
+             true -> keep
+          end;
       Action ->
           update_tweak_handler(is_tweak_hotkey(Action, T0))
     end;
@@ -248,15 +251,18 @@ handle_tweak_drag_event(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
           case wings_hotkey:event(Ev,St) of
-              {tweak,{tweak_magnet,mag_adjust}}=Cmd when Mag ->
-                B = wings_hotkey:bindkey(Ev, Cmd),
-                Sym = case B of
-                    {_,_,{K,_}} -> K;
-                    {_,{K,_}} -> K;
-                    {_,_,K} -> K;
-                    {_,K} -> K
-                end,
-                tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
+              {tweak,{tweak_magnet,mag_adjust}}=Cmd ->
+                if Mag ->
+                    B = wings_hotkey:bindkey(Ev, Cmd),
+                    Sym = case B of
+                        {_,_,{K,_}} -> K;
+                        {_,{K,_}} -> K;
+                        {_,_,K} -> K;
+                        {_,K} -> K
+                    end,
+                    tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
+                  true -> keep
+                end;
               _ ->
                 handle_tweak_drag_event_1(Ev,T)
           end;
@@ -267,7 +273,7 @@ handle_tweak_drag_event(Ev,T) ->
      handle_tweak_drag_event_1(Ev,T).
 
 %% Tweak Adjust Magnet Radius: Alt + Mouse Motion
-handle_tweak_drag_event_05(#keyboard{sym=Sym, mod=Mod},T)
+handle_tweak_drag_event_05(#keyboard{sym=Sym, mod=Mod},#tweak{magnet=true}=T)
   when Sym =:= ?L_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0;
        Sym =:= ?R_ALT, Mod band (?SHIFT_BITS bor ?CTRL_BITS) =:= 0 ->
     tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
@@ -287,14 +293,26 @@ tweak_drag_mag_adjust(#tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
     update_in_drag_radius_handler(T).
 
 %% Catch hotkeys for toggling xyz constraints and magnet attributes
-handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{st=St}=T0) ->
-    T = case wings_hotkey:event(Ev,St) of
+handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
+    case wings_hotkey:event(Ev,St) of
       next ->
-          is_tweak_combo(T0);
+          update_tweak_handler(is_tweak_combo(T));
+      {tweak,{tweak_magnet,mag_adjust}}=Cmd ->
+      %% Shouldn't get to here but just to be safe
+        if Mag ->
+              B = wings_hotkey:bindkey(Ev, Cmd),
+              Sym = case B of
+                  {_,_,{K,_}} -> K;
+                  {_,{K,_}} -> K;
+                  {_,_,K} -> K;
+                  {_,K} -> K
+              end,
+              tweak_drag_mag_adjust(T#tweak{mag_key=Sym});
+          true -> keep
+        end;
       Action ->
-          is_tweak_hotkey(Action, T0)
-    end,
-    update_tweak_handler(T);
+          update_tweak_handler(is_tweak_hotkey(Action, T))
+    end;
 handle_tweak_drag_event_1(#mousebutton{button=B}=Ev, #tweak{st=St}=T) ->
     case B > 3 of
       true ->
@@ -344,6 +362,7 @@ magnet_event_no_redraw(T) ->
 
 handle_magnet_event(redraw, #tweak{magnet=Mag,st=St}=T) ->
     redraw(St),
+    tweak_buttons(),
     tweak_magnet_radius_help(Mag),
     draw_magnet(T),
     magnet_event_no_redraw(T);
@@ -392,6 +411,7 @@ in_drag_radius_no_redraw(T) ->
 
 handle_in_drag_magnet_ev(redraw, #tweak{magnet=Mag,st=St}=T) ->
     redraw(St),
+    tweak_buttons(),
     tweak_magnet_radius_help(Mag),
     draw_magnet(T),
     in_drag_radius_no_redraw(T);
@@ -628,8 +648,11 @@ do_tweak(#dlo{drag={matrix,Pos0,Matrix0,_},src_we=#we{id=Id}}=D0,
     Matrix = e3d_mat:mul(e3d_mat:translate(Move), Matrix0),
     D0#dlo{drag={matrix,Pos,Matrix,e3d_mat:expand(Matrix)}};
 do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
-          src_we=#we{id=Id}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
-    Matrices = wings_u:get_matrices(Id, MM),
+          src_we=#we{id=Id,mirror=Mir}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
+    Matrices = case Mir of
+        none -> wings_u:get_matrices(Id, original);
+        _ -> wings_u:get_matrices(Id, MM)
+    end,
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
     {Tx,Ty,Tz} = TweakPos,
@@ -669,7 +692,6 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 do_tweak(D, _, _, _, _, _) -> D.
-
 
 %%%% Relax
 relax_vec_fn(V, #we{}=We,Pos0,Weight) ->
@@ -1031,7 +1053,7 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 %%%
 %%%% Hotkey and Combo Checking
 %%%
-is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet}=T0) ->
+is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
     case Cmd of
       {constrainXYZ, panel} -> T0;
       {constrainXYZ, Axis} ->
@@ -1060,6 +1082,7 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet}=T0) ->
         set_tweak_pref(Mode, 1, {false, false, false}),
         {_,Prefs} = wings_pref:get_value(tweak_prefs),
         Palette = orddict:fetch(Cam,Prefs),
+        wings_wm:send(tweak_palette, {current_state, St}),
         is_tweak_combo(T0#tweak{palette=Palette});
       _ ->
         T0
@@ -1205,7 +1228,6 @@ menu() ->
     Swap = [SwpB,?__(2,"Press another tool's key binding.")],
     Del = [{bold, ?__(3,"Remove Binding: ")}, button(3)],
     Mode = wings_pref:get_value(tweak_prefs),
-    HelpBox = wings_pref:get_value(tweak_help),
     {Toggle, TogHelp} = case Mode of
       {inactive,_} -> {?__(4,"Enable Tweak"),
                        ?__(5,"Tweak is currently disabled; click to enter Tweak mode.")};
@@ -1248,10 +1270,9 @@ menu() ->
         wings_msg:join([[Desc,?__(14,"Paint selection.")],
         [CurB, SelKey], Set, Swap, Del]), crossmark(SelKey)},
        separator,
-       {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional prefernence options for Tweak")},
-       {?__(15,"Show Help Box"),show_help_box,
-        ?__(16,"The on screen info which appears when any Tweak tool is activated."),
-        crossmark(HelpBox)}],
+       {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional preference options for Tweak")},
+       {?__(15,"Help"),show_help,
+        ?__(16,"Tweak help panel")}],
     Menu.
 
 mode(screen) -> ?__(1,"Move");
@@ -1316,7 +1337,6 @@ mag_thelp(spike) -> ?__(3,"This magnet pulls and pushes geometry out to a sharp 
 
 magnet_radius() -> ?__(1,"Magnet Radius").
 
-crossmark(false) -> [];
 crossmark({MagType, MagType}) -> [crossmark];
 crossmark({_, MagType}) when is_atom(MagType)-> [];
 crossmark("none") -> [];
@@ -1358,8 +1378,8 @@ command({tweak_magnet, mag_adjust}, St) ->
 command({tweak_magnet, MagType}, St) ->
     set_magnet_type(MagType),
     St;
-command(show_help_box, St) ->
-    wings_pref:set_value(tweak_help, not wings_pref:get_value(tweak_help)),
+command(show_help, St) ->
+    help_window(),
     St;
 command(options_panel, St) ->
     tweak_options_dialog(St);
@@ -1374,10 +1394,12 @@ command({Mode,B}, St) when B =< 3->
     Shift = Mod band ?SHIFT_BITS =/= 0,
     Alt = Mod band ?ALT_BITS =/= 0,
     set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
+    wings_wm:send(tweak_palette,{current_state,St}),
     St;
 command(Mode, St) when Mode =:= screen; Mode =:= normal; Mode =:= select;
   Mode =:= slide; Mode =:= slide_collapse; Mode =:= relax; Mode =:= tangent ->
     set_tweak_pref(Mode, 1, {false, false, false}),
+    wings_wm:send(tweak_palette,{current_state,St}),
     St;
 command(_,_) -> next.
 
@@ -1431,6 +1453,7 @@ exceptions(mb,1,{true,false,false}) -> cam_conflict();
 exceptions(mb,1,{false,true,false}) -> cam_conflict();
 exceptions(sketchup,2,{false,false,false}) -> cam_conflict();
 exceptions(sketchup,2,{false,true,false}) -> cam_conflict();
+exceptions(_,3,{false,false,true}) -> menu_conflict();
 exceptions(_,_,_) -> ok.
 
 menu_conflict() ->
@@ -1546,7 +1569,6 @@ default_prefs(_) -> % when wings_cam, blender, sketchup, nendo, mirai, tds
 %% Tweak Mode info line
 tweak_info_line(Cam, D) ->
     M0 = click_select(),
-    M1 = compose_info_line(D),
     Rmb = button(3) ++ ": ",
     TMenu = ?__(2,"Tweak menu"),
     M3 = [Rmb,?__(1,"Menu")],
@@ -1554,10 +1576,20 @@ tweak_info_line(Cam, D) ->
         maya -> [modifier({true,f,f}), Rmb, TMenu];
         _ -> [modifier({f,f,true}), Rmb, TMenu]
     end,
-    Message = wings_msg:join([M0,M1,M3,M4]),
+    Message = wings_msg:join([M0,M3,M4]),
     wings_wm:message(Message).
 
 %% Go through list of user defined keys and tweak tool, and build an info line
+tweak_buttons() ->
+    Cam = wings_pref:get_value(camera_mode),
+    case wings_pref:get_value(tweak_prefs) of
+      {active, Prefs} ->
+          D = orddict:fetch(Cam,Prefs),
+          Msg = compose_info_line(D),
+          draw_tweak_info_line(Msg);
+      {_,_} -> ok
+    end.
+
 compose_info_line([{{Button,Modifiers},Mode}|D]) ->
     B = button(Button) ++ ": ",
     Mod = modifier(Modifiers),
@@ -1576,45 +1608,36 @@ click_select() ->
       false -> []
     end.
 
-%%%
-%%%% Info box
-%%%
+draw_tweak_info_line(M) ->
+    {W,H} = wings_wm:win_size(),
+    wings_io:ortho_setup(),
+    wings_io:set_color(wings_pref:get_value(menu_text)),
+    wings_io:text_at(0 + ?CHAR_WIDTH, H-?CHAR_HEIGHT div 2, M).
+
+%%
+%%% Help Window
+%%
+
 -record(tb,		% text box
     {str=[],	% string
-     ln=1,		% number of lines in string (carriage returns)
      chr=0,		% length of current line
      br=60,		% max line length allowed (break)
      wrd=[], 	% accumulated letters from the current word
+     line=[],	% line acc
      res=[]}).	% Result
 
 -define(SPACE, $ ). % unicode space
 -define(NL, $\n). 	% unicode new line
 -define(TAB, $\t). 	% unicode tab (but we sub in 2 spaces)
 
-info_box(Text0) ->
-    case wings_pref:get_value(tweak_help) of
-      true ->
-        {W,H} = wings_wm:win_size(),
-        CW = ?CHAR_WIDTH,
-        LH = ?LINE_HEIGHT,
-        Win = W div CW,
-        Win2 = Win div 4,
-        LW = if Win2 > 38 -> Win2; true -> Win end,
-        #tb{ln=Lines,res=Text1} = string_to_text_box(Text0, LW - 2),
-        Text = lists:reverse(Text1),
-        Bottom = H - LH,
-        TextHeight = LH * Lines,
-        X = W - LW*CW,
-        wings_io:ortho_setup(),
-        wings_io:blend(wings_pref:get_value(info_background_color),
-          fun(Color) ->
-              wings_io:set_color(Color),
-              gl:recti(X, Bottom, W, Bottom - (TextHeight + LH div 2))
-          end),
-        wings_io:set_color(wings_pref:get_value(info_color)),
-        wings_io:text_at(X + CW, Bottom - (TextHeight - LH div 2), Text);
-      false -> ok
-    end.
+info_box(Text0, {W,_}) ->
+    CW = ?CHAR_WIDTH,
+    LH = ?LINE_HEIGHT,
+    LW = W div CW,
+    #tb{res=Text1} = string_to_text_box(Text0, LW - 2),
+    Text = lists:reverse(Text1),
+    X = W - LW*CW,
+    {Text, X + CW, length(Text), LH}.
 
 help_msg() ->
     [help_msg_hotkeys(), cr(2),
@@ -1627,7 +1650,7 @@ help_msg() ->
      help_msg_general()].
 
 help_msg_hotkeys() ->
-    [?__(1,"Before using a hotkeys for magnets, constriants, or view menu items, first release any modifier keys that are pressed."),
+    [?__(1,"Before using hotkeys for magnets, constriants, or view menu items, first release any modifier keys that are pressed."),
      ?__(3,"As long as the current mouse button is held down, the current tool will remain active.")].
 
 help_msg_magnet_radius() ->
@@ -1645,8 +1668,8 @@ help_msg_tool_change() ->
     ?__(2,"\t-Use the Tweak menu to select a tool by pressing Lmb."),
     ?__(3,"This will bind Lmb to that tool.\n"),
     ?__(5,"\t-Press a hotkey assigned to any Tweak tool via the Insert method."),
-    ?__(6,"This switches Lmb's current function to that tool, even when called during a tweak drag."),
-    ?__(4,"\t-Press any modifier key combo that has been bound to a tool in the Tweak Menu."),
+    ?__(6,"This switches Lmb's current function to that tool, even when called during a tweak drag.\n"),
+    ?__(4,"\t-Press any modifier key combo that has been bound to a tool in the Tweak Menu.\n"),
     ?__(7,"\t-Selecting a tool via the Tweak Palette which can be left open.")].
 
 help_msg_deselect() ->
@@ -1664,8 +1687,7 @@ help_msg_view_menu() ->
      ?__(3,"For example you can use Aim to point the camera at the selection's new coordinates, and then continue to tweak.")].
 
 help_msg_general() ->
-    [?__(1,"More information specific to certain tools will appear in the info line as necessary."),
-     ?__(2,"You can turn off this message box in the Tweak menu.")].
+    [?__(1,"More information specific to certain tools will appear in the info line as necessary.")].
 
 cr(2) ->
     "\n\n".
@@ -1678,66 +1700,132 @@ string_to_text_box(Info, MaxChar) ->
 str_to_tb(#tb{str=[?SPACE|Str], chr=Ch0, br=Ch0, wrd=[]}=Tb) ->
     str_to_tb(Tb#tb{str=Str});
 
-str_to_tb(#tb{str=[?SPACE|Str], chr=Ch0, br=Ch0, wrd=W0, res=R}=Tb) ->
+str_to_tb(#tb{str=[?SPACE|Str], chr=Ch0, br=Ch0, wrd=W0, line=Line}=Tb) ->
     Word = lists:reverse(W0),
-    str_to_tb(Tb#tb{str=Str, wrd=[], res=[Word|R]});
+    str_to_tb(Tb#tb{str=Str, wrd=[], line=[Word|Line]});
 
-str_to_tb(#tb{str=[?SPACE|Str], chr=Ch, wrd=W0, res=R}=Tb) ->
+str_to_tb(#tb{str=[?SPACE|Str], chr=Ch, wrd=W0, line=Line}=Tb) ->
     Word = lists:reverse(W0),
-    str_to_tb(Tb#tb{str=Str, wrd=[], chr=Ch+1, res=[?SPACE,Word|R]});
+    str_to_tb(Tb#tb{str=Str, wrd=[], chr=Ch+1, line=[?SPACE,Word|Line]});
 
-str_to_tb(#tb{str=[?NL|Str], ln=Ln, chr=Ch0, br=Ch0, wrd=[], res=R}=Tb) ->
-    str_to_tb(Tb#tb{str=Str, ln=Ln+1, chr=0, res=[?NL|R]});
+str_to_tb(#tb{str=[?NL|Str], chr=Ch0, br=Ch0, wrd=[], line=Line, res=R}=Tb) ->
+    str_to_tb(Tb#tb{str=Str, chr=0, line=[], res=[lists:reverse([?NL|Line])|R]});
 
-str_to_tb(#tb{str=[?NL|Str], ln=Ln, wrd=W0, res=R}=Tb) ->
+str_to_tb(#tb{str=[?NL|Str], wrd=W0, line=Line, res=R}=Tb) ->
     Word = lists:reverse(W0),
-    str_to_tb(Tb#tb{str=Str, ln=Ln+1, wrd=[], chr=0, res=[?NL, Word|R]});
+    str_to_tb(Tb#tb{str=Str, wrd=[], chr=0, line=[], res=[lists:reverse([?NL, Word|Line])|R]});
 
 str_to_tb(#tb{str=[?TAB|Str], chr=Ch0, br=Ch0, wrd=[]}=Tb) ->
     str_to_tb(Tb#tb{str=Str});
 
-str_to_tb(#tb{str=[?TAB|Str], chr=Ch0, br=Ch0, wrd=W0, res=R}=Tb) ->
+str_to_tb(#tb{str=[?TAB|Str], chr=Ch0, br=Ch0, wrd=W0, line=Line}=Tb) ->
     Word = lists:reverse(W0),
-    str_to_tb(Tb#tb{str=Str, wrd=[], res=[Word|R]});
+    str_to_tb(Tb#tb{str=Str, wrd=[], line=[Word|Line]});
 
-str_to_tb(#tb{str=[?TAB|Str], chr=Ch, wrd=W0, res=R}=Tb) ->
+str_to_tb(#tb{str=[?TAB|Str], chr=Ch, wrd=W0, line=Line}=Tb) ->
     Word = lists:reverse(W0),
-    str_to_tb(Tb#tb{str=Str, wrd=[], chr=Ch+2, res=[?SPACE,?SPACE,Word|R]});
+    str_to_tb(Tb#tb{str=Str, wrd=[], chr=Ch+2, line=[?SPACE,?SPACE,Word|Line]});
 
 str_to_tb(#tb{str=[H|T]}=Tb0) when is_list(H) ->
     Tb = str_to_tb(Tb0#tb{str=H}),
     str_to_tb(Tb#tb{str=T});
 
-str_to_tb(#tb{str=[C|Str], ln=Ln, chr=Ch0, br=Ch0, wrd=[], res=R}=Tb) ->
-    str_to_tb(Tb#tb{str=Str, ln=Ln+1, chr=1, wrd=[C], res=[?NL|R]});
+str_to_tb(#tb{str=[C|Str], chr=Ch0, br=Ch0, wrd=[], line=Line, res=R}=Tb) ->
+    str_to_tb(Tb#tb{str=Str, chr=1, wrd=[C], line=[], res=[lists:reverse([?NL|Line])|R]});
 
-str_to_tb(#tb{str=[C|Str], ln=Ln, chr=Ch0, br=Ch0, wrd=W, res=R}=Tb) ->
+str_to_tb(#tb{str=[C|Str], chr=Ch0, br=Ch0, wrd=W, line=Line, res=R}=Tb) ->
     Word0 = [C|W],
     Ch = length(Word0),
     case Ch >= Ch0 of
       true ->
         [C1|Word1] = W,
         Word = lists:reverse(Word1),
-        str_to_tb(Tb#tb{str=Str, ln=Ln+1, wrd=[C,C1], chr=2, res=[?NL, $-, Word|R]});
+        str_to_tb(Tb#tb{str=Str, wrd=[C,C1], chr=2, line=[], res=[lists:reverse([?NL, $-, Word|Line])|R]});
       false ->
-        str_to_tb(Tb#tb{str=Str, ln=Ln+1, wrd=Word0, chr=Ch, res=[?NL|R]})
+        str_to_tb(Tb#tb{str=Str, wrd=Word0, chr=Ch, line=[], res=[lists:reverse([?NL|Line])|R]})
     end;
 
 str_to_tb(#tb{str=[C|Str], chr=Ch, wrd=W}=Tb) ->
     str_to_tb(Tb#tb{str=Str, wrd=[C|W], chr=Ch+1});
 
-str_to_tb(#tb{str=[], wrd=[]}=Tb) ->
+str_to_tb(#tb{str=[], wrd=[], line=[]}=Tb) ->
     Tb;
-str_to_tb(#tb{str=[], ln=Ln, wrd=W0, chr=Ch0, br=Ch0, res=R}=Tb) ->
+str_to_tb(#tb{str=[], wrd=[], line=Line, res=Res}=Tb) ->
+    Tb#tb{res=[lists:reverse(Line)|Res]};
+str_to_tb(#tb{str=[], wrd=W0, chr=Ch0, br=Ch0, line=Line, res=Res}=Tb) ->
     Word = lists:reverse(W0),
     Ch = length(Word),
     case Ch =:= Ch0 of
-      true -> Tb#tb{wrd=[], res=[Word|R]};
-      false -> Tb#tb{ln=Ln+1, wrd=[], chr=Ch+1, res=[?SPACE,Word,?NL|R]}
+      true -> Tb#tb{wrd=[], line=[], res=[lists:reverse([Word|Line])|Res]};
+      false -> Tb#tb{wrd=[], chr=Ch+1, line=[], res=[[Word,?SPACE],lists:reverse([?NL|Line])|Res]}
     end;
-str_to_tb(#tb{str=[], wrd=W0, chr=Ch, res=R}=Tb) ->
+str_to_tb(#tb{str=[], wrd=W0, chr=Ch, line=Line, res=Res}=Tb) ->
     Word = lists:reverse(W0),
-    Tb#tb{wrd=[], chr=Ch+1, res=[?SPACE,Word|R]}.
+    Tb#tb{wrd=[], chr=Ch+1, line=[], res=[lists:reverse([?SPACE,Word|Line])|Res]}.
+
+%% Help Window Events
+-record(twk_help,
+    {text,			% Text in the help panel
+     x,				% left x
+     lh,			% line height
+     lines,			% number of lines at current dimensions
+     knob=0}).		% scroll
+
+help_window() ->
+    case wings_wm:is_window(tweak_help) of
+    true ->
+        wings_wm:raise(tweak_help),
+        keep;
+    false ->
+        Pos = {5,75},
+        Size = {200,300},
+        help_window(Pos,Size),
+        keep
+    end.
+
+help_window(Pos,Size) ->
+    {Text,X,Lines,LHeight} = info_box(help_msg(),Size),
+    TwkHelp = #twk_help{text=Text,x=X,lines=Lines,lh=LHeight},
+    Op = {seq,push, get_help_event(TwkHelp)},
+    wings_wm:toplevel(tweak_help, ?__(1,"Tweak Help"), Pos, Size,
+              [{sizeable,?PANE_COLOR},closable,vscroller,{anchor,ne}], Op).
+
+get_help_event(TwkHelp) ->
+   {replace,fun(Ev) -> help_event(Ev, TwkHelp) end}.
+
+help_event(redraw, #twk_help{text=Text0,x=X,knob=Knob,lh=Lh}) ->
+    {W,H} = wings_wm:win_size(tweak_help),
+    {_,T2} = lists:split(Knob, Text0),
+    wings_io:ortho_setup(),
+    wings_io:border(0, 0, W-1, H-1, ?PANE_COLOR),
+    wings_io:text_at(X, Lh+2, T2),
+    keep;
+help_event(resized,  #twk_help{}=TwkHelp0) ->
+    {W,H} = wings_wm:win_size(tweak_help),
+    {Text, X, Lines, Lh} = info_box(help_msg(), {W,H}),
+    TwkHelp = TwkHelp0#twk_help{knob=0,text=Text,x=X,lines=Lines,lh=Lh},
+    update_scroller(0, Lines),
+    wings_wm:dirty(),
+    get_help_event(TwkHelp);
+help_event({set_knob_pos, Pos}, #twk_help{lines=Lines,lh=Lh}=TwkHelp0) ->
+    Knob = round(Lines*Lh*Pos) div Lh,
+    TwkHelp = TwkHelp0#twk_help{knob=Knob},
+    update_scroller(Knob, Lines),
+    wings_wm:dirty(),
+    get_help_event(TwkHelp);
+help_event(close, _) ->
+    delete;
+help_event(_, _) ->
+    keep.
+
+update_scroller(Knob,Lines) ->
+    {_,H} = wings_wm:win_size(tweak_help),
+    Total = Lines*?LINE_HEIGHT,
+    Name = wings_wm:this(),
+    wings_wm:set_knob(Name, (Knob*?LINE_HEIGHT)/Total, H/Total).
+%%
+%%% End of Help Window
+%%
 
 %% XYZ Constraints info line
 mode_message(screen) ->
@@ -1816,26 +1904,26 @@ save_magnet_prefs(#tweak{magnet=Mag, mag_type=MT, mag_rad=MagR}) ->
 %%% Tweak window.
 %%%
 -record(tw,
-	{n,						% Menu Items.
-	 lh,					% Line height.
-	 menu,					% menu items.
-	 w,						% Menu width in pixels
-	 h,						% Menu height in pixels
-	 active,				% Tweak 'active'|'inactive'
-	 current,				% currently hilighted menu item.
-	 lmb,					% tool assigned to lmb.
-	 mag					% magnet status.
-	}).
+    {n,						% Menu Items.
+     lh,					% Line height.
+     menu,					% menu items.
+     w,						% Menu width in pixels
+     h,						% Menu height in pixels
+     active,				% Tweak 'active'|'inactive'
+     current,				% currently hilighted menu item.
+     lmb,					% tool assigned to lmb.
+     mag					% magnet status.
+    }).
 
 window() ->
     case wings_wm:is_window(tweak_palette) of
-	true ->
-	    wings_wm:raise(tweak_palette),
-	    keep;
-	false ->
-	    Pos = {5,55},
-	    window(Pos),
-	    keep
+    true ->
+        wings_wm:raise(tweak_palette),
+        keep;
+    false ->
+        Pos = {5,100},
+        window(Pos),
+        keep
     end.
 
 window(Pos) ->
@@ -1850,16 +1938,17 @@ window(Pos) ->
     Magnet = wings_pref:get_value(tweak_magnet),
     {Tweak, Mode} = tweak_tool(1, {false, false, false}),
     Tw = #tw{h=Height, w=Width, menu=Menu, active=Tweak, n=N, current=[], lh=Lh, lmb=Mode, mag=Magnet},
-    Props = [{display_lists,geom_display_lists}],
     Op = {seq,push,get_event(Tw)},
     wings_wm:toplevel(tweak_palette, tweak_palette_title(), Pos, Size,
-		      [closable,{properties,Props}], Op).
+              [closable], Op).
 
-max_width([{MenuItem,_,_}|Tm], L0) ->
+max_width([{MenuItem,_,_,_}|Tm], L0) ->
     L1 = length(MenuItem),
     L2 = if L1 > L0 -> L1; true -> L0 end,
     max_width(Tm, L2);
-max_width([],L) -> L.
+max_width([],L) -> L;
+max_width([_|Tm], L2) ->
+   max_width(Tm, L2).
 
 tweak_tool(Button, Modifiers) ->
     {Tweak, Modes} = wings_pref:get_value(tweak_prefs),
@@ -1875,13 +1964,12 @@ tweak_tool(Button, Modifiers) ->
           end,
     {Tweak, Mode}.
 
-
 tweak_palette_title() ->
     ?__(1,"Tweak").
 
 get_event(Tw) ->
     {replace,fun(Ev) -> event(Ev, Tw) end}.
-
+%% Palette Events
 event(redraw, #tw{w=W,h=H}=Tw) ->
     wings_io:ortho_setup(),
     wings_io:border(0, 0, W-1, H-1, wings_pref:get_value(menu_color)),
@@ -1890,31 +1978,26 @@ event(redraw, #tw{w=W,h=H}=Tw) ->
 event({current_state,_}, Tw0) ->
     Tw = update_tweak_palette(Tw0),
     Menu = valid_menu_items(menu()),
-    {Tweak, Mode} = tweak_tool(1, {false, false, false}),
     wings_wm:dirty(),
-    get_event(Tw#tw{menu=Menu,lmb=Mode,active=Tweak});
+    get_event(Tw#tw{menu=Menu});
 event(close, _) ->
     delete;
 event(#mousemotion{x=X,y=Y}, Tw) ->
     mousemotion(X, Y, Tw);
-event(#mousebutton{button=1,mod=0,state=?SDL_RELEASED}, #tw{current=Mode}=Tw)->
-    set_tweak_pref(Mode, 1, {false,false,false}),
-    Menu = valid_menu_items(menu()),
-    wings_wm:dirty(),
-    get_event(Tw#tw{menu=Menu,lmb=Mode});
-event(#mousebutton{button=B,mod=Mod,state=?SDL_RELEASED}, #tw{current=Mode}=Tw) when B =< 3 ->
+event(#mousebutton{state=?SDL_RELEASED},#tw{current=[]}) ->
+    keep;
+event(#mousebutton{button=B,mod=Mod,state=?SDL_RELEASED}, #tw{current=Mode}=Tw0) when B =< 3 ->
     Ctrl = Mod band ?CTRL_BITS =/= 0,
     Shift = Mod band ?SHIFT_BITS =/= 0,
     Alt = Mod band ?ALT_BITS =/= 0,
     set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
+    Tw = update_tweak_palette(Tw0),
     Menu = valid_menu_items(menu()),
     wings_wm:dirty(),
     get_event(Tw#tw{menu=Menu});
-
 event(lost_focus, Tw) ->
     wings_wm:dirty(),
     get_event(Tw#tw{current=[]});
-
 event(_,_) ->
     keep.
 
@@ -1925,9 +2008,11 @@ mousemotion(X, Y, Tw0) ->
 
 valid_menu_items([I|Menu]) ->
     case I of
-      {Name,Cmd,Help,_} when is_function(Cmd) -> %% menu format
+      {Name,Cmd,Help,Bound} when is_function(Cmd) -> %% menu format
         C = Cmd(1,[]), %% change fun to cmd name.. 1 is for lmb
-        [{Name,C,Help}|valid_menu_items(Menu)];
+        [{Name,C,Help,Bound}|valid_menu_items(Menu)];
+%      {_,{constrainXYZ,_}}=C ->
+%        [C|valid_menu_items(Menu)];
       _ ->
         valid_menu_items(Menu)
     end;
@@ -1936,7 +2021,7 @@ valid_menu_items([]) -> [].
 draw_tweak_palette(#tw{menu=Menu,lh=Lh}=Tw) ->
     draw_tweak_menu_items(Menu, Lh, Tw).
 
-draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, lmb=Mode}=Tw) ->
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, lmb=Mode}=Tw) ->
     {R,G,B} = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
@@ -1945,7 +2030,7 @@ draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, curren
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, current=Mode}=Tw) ->
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, current=Mode}=Tw) ->
     Colour = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:set_color(wings_pref:get_value(menu_hilite)),
@@ -1955,21 +2040,29 @@ draw_tweak_menu_items([{Name,{_,{Mode,_}},Help}|Menu], Y, #tw{lh=Lh, w=W, curren
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,{_,{Mode,_}},_}|Menu], Y, #tw{lh=Lh, w=W,lmb=Mode}=Tw) ->
+draw_tweak_menu_items([{Name,{_,{Mode,_}},_,_}|Menu], Y, #tw{lh=Lh, w=W,lmb=Mode}=Tw) ->
     {R,G,B,A} = wings_pref:get_value(menu_color),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
-    Col = wings_pref:get_value(menu_hilited_text),
-    wings_io:set_color(Col),
+    wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,_,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
+draw_tweak_menu_items([{Name,_,_,Bound}|Menu], Y, #tw{lh=Lh}=Tw) ->
     wings_io:set_color(wings_pref:get_value(menu_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_colour(Bound,Name)),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([], _, _) -> ok.
+draw_tweak_menu_items([C|Menu], Y, Tw) ->
+    draw_tweak_menu_items(Menu, Y, Tw);
+draw_tweak_menu_items(_,_,_) -> ok.
+
+% Bound tools are in bold print
+text_colour([crossmark],Name) ->
+    [{bold,Name}];
+text_colour([],Name) ->
+    Name.
+
 
 update_highlight(_X, Y, #tw{menu=Menu,n=N,lh=Lh}=Tw) ->
     Selected0 = ((Y+2) div Lh) + 1,
@@ -1977,9 +2070,8 @@ update_highlight(_X, Y, #tw{menu=Menu,n=N,lh=Lh}=Tw) ->
       true -> N;
       false -> Selected0
     end,
-    {_,{_,{Mode,_}},_} = lists:nth(Selected,Menu),
+    {_,{_,{Mode,_}},_,_} = lists:nth(Selected,Menu),
     Tw#tw{current=Mode}.
-
 
 update_tweak_palette(Tw) ->
     {Tweak, Mode} = tweak_tool(1, {false, false, false}),
