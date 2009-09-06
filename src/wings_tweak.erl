@@ -77,7 +77,7 @@ tweak_event(Ev, St) ->
           case orddict:find(Cam,TweakModes) of
             {ok,Palette} ->
                 Down = now(),
-                tweak_info_line(Cam, Palette),
+                tweak_info_line(Cam),
                 tweak_magnet_help(),
                 T = #tweak{palette=Palette, magnet=Mag, mag_type=MagType,
                   mag_rad=MagR, cam=Cam, clk={Down,0}, st=St},
@@ -127,23 +127,23 @@ handle_tweak_event_05(#keyboard{sym=Sym, mod=Mod},#tweak{magnet=true}=T)
 handle_tweak_event_05(_,_) ->
     next.
 
-magnet_adjust(#tweak{st=#st{sel=Sel0}=St0}=T0) ->
+magnet_adjust(#tweak{st=St0}=T0) ->
     {_,X,Y} = wings_wm:local_mouse_state(),
     {GX,GY} = wings_wm:local2global(X, Y),
     case wings_pick:do_pick(X,Y,St0) of
-      {add, MM, #st{sel=Sel}=St} ->
-          Id = get_id(Sel0, Sel),
+      {add, {Id,Elem,_}=What, St} ->
+	  IdElem = {Id,gb_sets:singleton(Elem)},
           wings_wm:grab_focus(),
           wings_io:grab(),
-          begin_magnet_adjustment(MM, St),
-          T = T0#tweak{id=Id,ox=GX,oy=GY,cx=0,cy=0},
+          begin_magnet_adjustment(What, St),
+          T = T0#tweak{id=IdElem,ox=GX,oy=GY,cx=0,cy=0},
           {seq,push,update_magnet_handler(T)};
-      {delete, MM, #st{sel=Sel}} ->
-          Id = get_id(Sel0, Sel),
+      {delete, {Id,Elem,_}=What, _} ->
+	  IdElem = {Id,gb_sets:singleton(Elem)},
           wings_wm:grab_focus(),
           wings_io:grab(),
-          begin_magnet_adjustment(MM, St0),
-          T = T0#tweak{id=Id,ox=GX,oy=GY,cx=0,cy=0},
+          begin_magnet_adjustment(What, St0),
+          T = T0#tweak{id=IdElem,ox=GX,oy=GY,cx=0,cy=0},
           {seq,push,update_magnet_handler(T)};
       none -> next
     end.
@@ -154,24 +154,24 @@ handle_tweak_event_1(#tweak{mode=select, ox=X, oy=Y, st=St}) ->
     wings_pick:paint_pick(X, Y, St);
 
 %% Tweak Drag
-handle_tweak_event_1(#tweak{ox=X, oy=Y, st=#st{sel=Sel0}=St0}=T0) ->
+handle_tweak_event_1(#tweak{ox=X, oy=Y, st=St0}=T0) ->
     {GX,GY} = wings_wm:local2global(X, Y),
     case wings_pick:do_pick(X,Y,St0) of
-      {add, MM, #st{sel=Sel}=St} ->
-        Id = get_id(Sel0, Sel),
+      {add, {Id,Elem,_}=What, St} ->
+        IdElem = {Id,gb_sets:singleton(Elem)},
         wings_wm:grab_focus(),
         wings_io:grab(),
-        begin_drag(MM, St, T0),
+        begin_drag(What, St, T0),
         do_tweak(0.0, 0.0, 0.0, 0.0, screen),
-        T = T0#tweak{id={add,Id},ox=GX,oy=GY,cx=0,cy=0},
+        T = T0#tweak{id={add,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
-      {delete, MM, #st{sel=Sel}} ->
-        Id = get_id(Sel0, Sel),
+      {delete, {Id,Elem,_}=What, _} ->
+        IdElem = {Id,gb_sets:singleton(Elem)},
         wings_wm:grab_focus(),
         wings_io:grab(),
-        begin_drag(MM, St0, T0),
+        begin_drag(What, St0, T0),
         do_tweak(0.0, 0.0, 0.0, 0.0, screen),
-        T = T0#tweak{id={del,Id},ox=GX,oy=GY,cx=0,cy=0},
+        T = T0#tweak{id={del,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       none -> next
     end.
@@ -464,15 +464,19 @@ redraw(St) ->
     keep.
 
 %% Adjust Magnet Radius
-begin_magnet_adjustment(MM, St) ->
+begin_magnet_adjustment(SelElem, St) ->
     wings_draw:refresh_dlists(St),
     wings_dl:map(fun(D, _) ->
-             begin_magnet_adjustment_fun(D, MM)
+             begin_magnet_adjustment_fun(D, SelElem)
          end, []).
 
-begin_magnet_adjustment_fun(#dlo{src_sel={Mode,Els},src_we=We}=D, MM) ->
+begin_magnet_adjustment_fun(#dlo{src_sel={Mode,Els},src_we=We}=D, SelElem) ->
     Vs0 = sel_to_vs(Mode, gb_sets:to_list(Els), We),
     Center = wings_vertex:center(Vs0, We),
+    MM = case {We,SelElem} of
+	     {#we{id=Id},{Id,_,MM0}} -> MM0;
+	     {_,_} -> original
+	 end,
     D#dlo{drag=#drag{pos=Center,mm=MM}};
 begin_magnet_adjustment_fun(D, _) -> D.
 
@@ -497,23 +501,26 @@ end_magnet_adjust({OrigId,El}) ->
          end, []).
 
 %%%%
-begin_drag(MM, St, T) ->
+begin_drag(SelElem, St, T) ->
     wings_draw:refresh_dlists(St),
     wings_dl:map(fun(D, _) ->
-             begin_drag_fun(D, MM, St, T)
+             begin_drag_fun(D, SelElem, St, T)
          end, []).
 
-begin_drag_fun(#dlo{src_sel={body,_},src_we=#we{vp=Vtab}=We}=D, _MM, _St, _T) ->
+begin_drag_fun(#dlo{src_sel={body,_},src_we=#we{vp=Vtab}=We}=D, _, _, _) ->
     Vs = wings_util:array_keys(Vtab),
     Center = wings_vertex:center(Vs, We),
     Id = e3d_mat:identity(),
     D#dlo{drag={matrix,Center,Id,e3d_mat:expand(Id)}};
-
-begin_drag_fun(#dlo{src_sel={Mode,Els},src_we=We}=D0, MM, St, T) ->
+begin_drag_fun(#dlo{src_sel={Mode,Els},src_we=We}=D0, SelElem, St, T) ->
     Vs0 = sel_to_vs(Mode, gb_sets:to_list(Els), We),
     Center = wings_vertex:center(Vs0, We),
     {Vs,Magnet} = begin_magnet(T, Vs0, Center, We),
     D = wings_draw:split(D0, Vs, St),
+    MM = case {We,SelElem} of
+	     {#we{id=Id},{Id,_,MM0}} -> MM0;
+	     {_,_} -> original
+	 end,
     D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}};
 begin_drag_fun(D, _, _, _) -> D.
 
@@ -1179,39 +1186,6 @@ show_cursor_1(X0,Y0) ->
     wings_wm:release_focus(),
     wings_io:ungrab(X,Y).
 
-%% Get last {id, element} before beginning tweak drag so we knoe where to unhide
-%% the cursor
-get_id([],[{Id,El}]) ->  {Id,El};
-get_id([{Id,El1}],[{Id,El2}]) ->
-    S1 = gb_sets:size(El1),
-    S2 = gb_sets:size(El2),
-    El = if
-      S1 > S2 -> gb_sets:subtract(El1, El2);
-      true -> gb_sets:subtract(El2, El1)
-    end,
-    {Id,El};
-get_id([{Id,El}],[]) ->  {Id,El};
-get_id(Sel0, Sel) ->
-    L1 = length(Sel0),
-    L2 = length(Sel),
-    [Res] = if
-            L1 =:= L2 ->
-              [{Id,El1}] = lists:subtract(Sel0, Sel),
-              [{Id,El2}] = lists:subtract(Sel, Sel0),
-               S1 = gb_sets:size(El1),
-               S2 = gb_sets:size(El2),
-               El = if
-                 S1 > S2 -> gb_sets:subtract(El1, El2);
-                 true -> gb_sets:subtract(El2, El1)
-               end,
-               [{Id,El}];
-            L1 < L2 ->
-              ordsets:subtract(Sel, Sel0);
-            L1 > L2 ->
-              ordsets:subtract(Sel0, Sel)
-    end,
-    Res.
-
 %%%
 %%%% Tweak Menu
 %%%
@@ -1222,11 +1196,12 @@ menu(X, Y) ->
     wings_menu:menu(X, Y, Owner, tweak, Menu).
 
 menu() ->
-    SetB = {bold,?__(20,"Set Binding: ")},
-    SwpB = {bold,?__(21,"Swap Bindings: ")},
+    CurB = {bold,?__(19,"Binding: ")},
+    SetB = {bold,?__(20,"Set: ")},
+    SwpB = {bold,?__(21,"Swap: ")},
     Set = [SetB, ?__(1,"Hold modifiers and/or press any mouse button.")],
     Swap = [SwpB,?__(2,"Press another tool's key binding.")],
-    Del = [{bold, ?__(3,"Remove Binding: ")}, button(3)],
+    Del = [{bold, ?__(3,"Delete: ")}, button(3)],
     Mode = wings_pref:get_value(tweak_prefs),
     {Toggle, TogHelp} = case Mode of
       {inactive,_} -> {?__(4,"Enable Tweak"),
@@ -1234,8 +1209,6 @@ menu() ->
       {active,_}   -> {?__(6,"Disable Tweak"),
                        ?__(7,"Tweak is currently enabled; click to exit Tweak mode.")}
     end,
-    Desc = {bold,?__(22,"Desc: ")},
-    CurB = {bold,?__(19,"Binding: ")},
     ScKey = keys_combo(screen),
     NKey = keys_combo(normal),
     RKey = keys_combo(relax),
@@ -1249,25 +1222,25 @@ menu() ->
        {?__(18,"XYZ Constraints"),{constrainXYZ, xyz_constraints_menu()}},
        separator,
        {mode(screen), tweak_menu_fun(screen),
-        wings_msg:join([[Desc,?__(8,"Drag elements relative to screen.")],
+        wings_msg:join([?__(8,"Drag elements relative to screen."),
         [CurB, ScKey], Set, Swap, Del]), crossmark(ScKey)},
        {mode(normal), tweak_menu_fun(normal),
-        wings_msg:join([[Desc,?__(9,"Drag selection along average normal.")],
+        wings_msg:join([?__(9,"Drag selection along average normal."),
         [CurB, NKey], Set, Swap, Del]), crossmark(NKey)},
        {mode(relax),tweak_menu_fun(relax),
-        wings_msg:join([[Desc,?__(10,"Relax geometry.")],
+        wings_msg:join([?__(10,"Relax geometry."),
         [CurB, RKey], Set, Swap, Del]), crossmark(RKey)},
        {mode(slide),tweak_menu_fun(slide),
-        wings_msg:join([[Desc,?__(11,"Slide elements along adjacent edges.")],
+        wings_msg:join([?__(11,"Slide elements along adjacent edges."),
         [CurB, SlKey], Set, Swap, Del]), crossmark(SlKey)},
        {mode(slide_collapse),tweak_menu_fun(slide_collapse),
-        wings_msg:join([[Desc,?__(12,"Slide elements and collapse short edges.")],
+        wings_msg:join([?__(12,"Slide elements and collapse short edges."),
         [CurB, SlColKey],Set, Swap, Del]), crossmark(SlColKey)},
        {mode(tangent),tweak_menu_fun(tangent),
-        wings_msg:join([[Desc,?__(13,"Constrain drag to selection's average plane.")],
+        wings_msg:join([?__(13,"Constrain drag to selection's average plane."),
         [CurB, TKey], Set, Swap, Del]), crossmark(TKey)},
        {mode(select),tweak_menu_fun(select),
-        wings_msg:join([[Desc,?__(14,"Paint selection.")],
+        wings_msg:join([?__(14,"Paint selection."),
         [CurB, SelKey], Set, Swap, Del]), crossmark(SelKey)},
        separator,
        {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional preference options for Tweak")},
@@ -1540,7 +1513,7 @@ set_tweak_prefs(Cam, TweakModes) ->
     D = default_prefs(Cam),
     Prefs = orddict:store(Cam,D,TweakModes),
     wings_pref:set_value(tweak_prefs,{active,Prefs}),
-    tweak_info_line(Cam, D),
+    tweak_info_line(Cam),
     tweak_magnet_help().
 
 %% {Bool, Bool, Bool} == {Crtl, Shift, Alt}
@@ -1567,7 +1540,7 @@ default_prefs(_) -> % when wings_cam, blender, sketchup, nendo, mirai, tds
     orddict:from_list(D).
 
 %% Tweak Mode info line
-tweak_info_line(Cam, D) ->
+tweak_info_line(Cam) ->
     M0 = click_select(),
     Rmb = button(3) ++ ": ",
     TMenu = ?__(2,"Tweak menu"),
@@ -1609,7 +1582,7 @@ click_select() ->
     end.
 
 draw_tweak_info_line(M) ->
-    {W,H} = wings_wm:win_size(),
+    {_,H} = wings_wm:win_size(),
     wings_io:ortho_setup(),
     wings_io:set_color(wings_pref:get_value(menu_text)),
     wings_io:text_at(0 + ?CHAR_WIDTH, H-?CHAR_HEIGHT div 2, M).
@@ -1640,13 +1613,13 @@ info_box(Text0, {W,_}) ->
     {Text, X + CW, length(Text), LH}.
 
 help_msg() ->
-    [help_msg_hotkeys(), cr(2),
-     help_msg_magnet_radius(), cr(2),
-     help_msg_magnet_hotkeys(), cr(2),
-     help_msg_tool_change(), cr(2),
-     help_msg_deselect(), cr(2),
-     help_msg_camera(), cr(2),
-     help_msg_view_menu(), cr(2),
+    [help_msg_hotkeys(), cr(),
+     help_msg_magnet_radius(), cr(),
+     help_msg_magnet_hotkeys(), cr(),
+     help_msg_tool_change(), cr(),
+     help_msg_deselect(), cr(),
+     help_msg_camera(), cr(),
+     help_msg_view_menu(), cr(),
      help_msg_general()].
 
 help_msg_hotkeys() ->
@@ -1689,7 +1662,7 @@ help_msg_view_menu() ->
 help_msg_general() ->
     [?__(1,"More information specific to certain tools will appear in the info line as necessary.")].
 
-cr(2) ->
+cr() ->
     "\n\n".
 
 %% Formats strings to fit the width of a line length given in characters
@@ -1800,11 +1773,27 @@ help_event(redraw, #twk_help{text=Text0,x=X,knob=Knob,lh=Lh}) ->
     wings_io:border(0, 0, W-1, H-1, ?PANE_COLOR),
     wings_io:text_at(X, Lh+2, T2),
     keep;
-help_event(resized,  #twk_help{}=TwkHelp0) ->
+help_event(resized,  #twk_help{knob=Pos,lines=L0}=TwkHelp0) ->
+    P = Pos/L0,
     {W,H} = wings_wm:win_size(tweak_help),
     {Text, X, Lines, Lh} = info_box(help_msg(), {W,H}),
-    TwkHelp = TwkHelp0#twk_help{knob=0,text=Text,x=X,lines=Lines,lh=Lh},
-    update_scroller(0, Lines),
+    NewPos = round(Lines*P),
+    TwkHelp = TwkHelp0#twk_help{knob=NewPos,text=Text,x=X,lines=Lines,lh=Lh},
+    update_scroller(NewPos, Lines),
+    wings_wm:dirty(),
+    get_help_event(TwkHelp);
+help_event(#mousebutton{button=B},#twk_help{knob=Pos,lines=Lines}=TwkHelp0)
+  when B =:= 4; B =:= 5 ->
+    Knob = case B of
+      5 ->
+        Sc = Pos + 2,
+        if Sc > Lines - 5 -> Pos; true -> Sc end;
+      4 ->
+        Sc = Pos - 2,
+        if Sc < 0 -> Pos; true -> Sc end
+    end,
+    TwkHelp = TwkHelp0#twk_help{knob=Knob},
+    update_scroller(Knob, Lines),
     wings_wm:dirty(),
     get_help_event(TwkHelp);
 help_event({set_knob_pos, Pos}, #twk_help{lines=Lines,lh=Lh}=TwkHelp0) ->
@@ -2053,7 +2042,7 @@ draw_tweak_menu_items([{Name,_,_,Bound}|Menu], Y, #tw{lh=Lh}=Tw) ->
     wings_io:text_at(?CHAR_WIDTH, Y - 2, text_colour(Bound,Name)),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([C|Menu], Y, Tw) ->
+draw_tweak_menu_items([_|Menu], Y, Tw) ->
     draw_tweak_menu_items(Menu, Y, Tw);
 draw_tweak_menu_items(_,_,_) -> ok.
 
