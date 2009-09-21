@@ -628,7 +628,7 @@ do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
               M when M =:= xmove; M =:= ymove; M =:= zmove;
                      M =:= xymove; M =:= yzmove; M =:= zxmove ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, Mode);
-              false ->
+              _ ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, screen)
             end;
         (D, _) ->
