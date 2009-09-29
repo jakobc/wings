@@ -62,6 +62,10 @@ init() ->
     wings_pref:set_default(tweak_single_click,true),
     wings_pref:set_default(tweak_click_speed,200000),
     wings_pref:set_default(tweak_mag_adj_sensitivity,0.01),
+    wings_pref:set_default(tweak_axis,screen),
+    set_tweak_pref(screen, 3, {false,false,false}),
+    set_tweak_pref(normal, 3, {false,false,false}),
+    set_tweak_pref(tangent, 3, {false,false,false}),
     true.
 
 tweak_event(Ev, St) ->
@@ -162,7 +166,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=St0}=T0) ->
         wings_wm:grab_focus(),
         wings_io:grab(),
         begin_drag(What, St, T0),
-        do_tweak(0.0, 0.0, 0.0, 0.0, screen),
+        do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
         T = T0#tweak{id={add,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       {delete, {Id,Elem,_}=What, _} ->
@@ -170,7 +174,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=St0}=T0) ->
         wings_wm:grab_focus(),
         wings_io:grab(),
         begin_drag(What, St0, T0),
-        do_tweak(0.0, 0.0, 0.0, 0.0, screen),
+        do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
         T = T0#tweak{id={del,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       none -> next
@@ -189,24 +193,20 @@ tweak_drag_no_redraw(T) ->
 handle_tweak_drag_event(redraw, #tweak{mode=Mode,st=St}=T) ->
     redraw(St),
     tweak_buttons(),
-    mode_message(Mode),
+    mode_message_1(Mode),
+    mode_message_2(Mode),
     tweak_drag_no_redraw(T);
 handle_tweak_drag_event(#mousemotion{x=X, y=Y},
-            #tweak{mode=screen, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
+            #tweak{mode=TwkMode, cx=CX, cy=CY, ox=OX, oy=OY}=T0)
+            when TwkMode =:= move ->
     {GX,GY} = wings_wm:local2global(X, Y),
     DX = GX-OX, %since last move X
     DY = GY-OY, %since last move Y
     DxOrg = DX+CX, %total X
     DyOrg = DY+CY, %total Y
-    Cs = constraints(),
-    Mode = if
-      Cs =:= [true,true,false] -> xymove;
-      Cs =:= [false,true,true] -> yzmove;
-      Cs =:= [true,false,true] -> zxmove;
-      Cs =:= [true,false,false] -> xmove;
-      Cs =:= [false,true,false] -> ymove;
-      Cs =:= [false,false,true] -> zmove;
-      true -> screen
+    Mode = case constraints(TwkMode) of
+      no_xyz -> other_constraint_dir(TwkMode);
+      Other -> Other
     end,
     wings_io:warp(OX,OY),
     do_tweak(DX,DY,DxOrg,DyOrg,Mode),
@@ -629,7 +629,7 @@ do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
                      M =:= xymove; M =:= yzmove; M =:= zxmove ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, Mode);
               _ ->
-                do_tweak(D, DX, DY, DxOrg, DyOrg, screen)
+                do_tweak(D, DX, DY, DxOrg, DyOrg, move_screen)
             end;
         (D, _) ->
              do_tweak(D, DX, DY, DxOrg, DyOrg, Mode)
@@ -689,9 +689,13 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
               magnet_tweak_slide_fn(Mag0, We,Orig,TweakPos);
         slide_collapse -> Pos = TweakPos,
               magnet_tweak_slide_fn(Mag0, We,Orig,TweakPos);
-        normal -> Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
+        move_normal -> Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
               magnet_tweak(Mag0, Pos);
-        tangent -> Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
+        move_planar -> Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
+              magnet_tweak(Mag0, Pos);
+        move_default_axis -> Pos = tweak_default_axis(Pos0, TweakPos),
+              magnet_tweak(Mag0, Pos);
+        move_default_planar -> Pos = tweak_default_tangent(Pos0, TweakPos),
               magnet_tweak(Mag0, Pos);
         _ 	-> Pos = TweakPos,
               magnet_tweak(Mag0, Pos)
@@ -827,7 +831,19 @@ tweak_tangent(Vs, Pos0, TweakPos, D) ->
         e3d_vec:add_prod(TweakPos, N, T)
     end.
 
-%%%% Along Average Normal
+%% Tangent Plane of Default Axis
+tweak_default_tangent(Pos0, TweakPos) ->
+    {_,N} = wings_pref:get_value(default_axis),
+    %% constraining by the plane
+    Dot = e3d_vec:dot(N, N),
+    if
+    Dot =:= 0.0 -> Pos0;
+    true ->
+        T = -e3d_vec:dot(N, e3d_vec:sub(TweakPos, Pos0)) / Dot,
+        e3d_vec:add_prod(TweakPos, N, T)
+    end.
+
+%% Along Average Normal
 tweak_normal( _, Pos0, TweakPos, #dlo{src_we=#we{}=We,src_sel={face,Sel0}}) ->
     Faces = gb_sets:to_list(Sel0),
     Normals = face_normals(Faces,We,[]),
@@ -848,6 +864,18 @@ tweak_normal( _, Pos0, TweakPos, #dlo{src_we=#we{}=We,src_sel={face,Sel0}}) ->
 tweak_normal(Vs, Pos0, TweakPos, D) ->
     Normals = [vertex_normal(V, D) || V <- Vs],
     N = e3d_vec:norm(e3d_vec:add(Normals)),
+    %% Return the point along the normal closest to TweakPos.
+    Dot = e3d_vec:dot(N, N),
+    if
+    Dot =:= 0.0 -> Pos0;
+    true ->
+        T = e3d_vec:dot(N, e3d_vec:sub(TweakPos, Pos0)) / Dot,
+        e3d_vec:add_prod(Pos0, N, T)
+    end.
+
+%% Along Default Axis
+tweak_default_axis(Pos0, TweakPos) ->
+    {_,N} = wings_pref:get_value(default_axis),
     %% Return the point along the normal closest to TweakPos.
     Dot = e3d_vec:dot(N, N),
     if
@@ -1062,8 +1090,8 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 %%%
 is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
     case Cmd of
-      {constrainXYZ, panel} -> T0;
-      {constrainXYZ, Axis} ->
+      {axis_constraint, panel} -> T0;
+      {axis_constraint, Axis} ->
           set_axis_lock(Axis),
           T0;
       {tweak_magnet, toggle_magnet} ->
@@ -1084,8 +1112,8 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
           tweak_magnet_help(),
           setup_magnet(T),
           T;
-      {Mode,1} when Mode =:= screen; Mode =:= normal; Mode =:= slide;
-        Mode =:= slide_collapse; Mode =:= relax; Mode =:= tangent ->
+      {Mode,1} when Mode =:= move; Mode =:= slide;
+        Mode =:= slide_collapse; Mode =:= relax ->
         set_tweak_pref(Mode, 1, {false, false, false}),
         {_,Prefs} = wings_pref:get_value(tweak_prefs),
         Palette = orddict:fetch(Cam,Prefs),
@@ -1119,7 +1147,7 @@ is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
             St = wings_dl:map(fun (D, _) ->
                       update_drag(D, T)  % used to find mid tweak model data
                       end, St0),
-            do_tweak(0.0, 0.0, 0.0, 0.0, screen),
+            do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
             T#tweak{mode=NewMode,st=St,ox=X,oy=Y,cx=0,cy=0};
         _ -> T
     end.
@@ -1137,10 +1165,18 @@ update_drag(#dlo{src_sel={Mode,Els},src_we=#we{id=Id},drag=#drag{mm=MM}}=D0,
 update_drag(D,#tweak{st=St}) -> {D,St}.
 
 %%%% XYZ Tweak Constraints
-constraints() ->
+constraints(move) ->
     FKeys = fkey_combo(), % held xyz constraints
     TKeys = wings_pref:get_value(tweak_xyz), % Toggled xyz constraints
-    add_constraints(FKeys,TKeys).
+    case add_constraints(FKeys,TKeys) of
+      [true,false,false] -> xmove;
+      [false,true,false] -> ymove;
+      [false,false,true] -> zmove;
+      [true,true,false] -> xymove;
+      [false,true,true] -> yzmove;
+      [true,false,true] -> zxmove;
+      _otherwise -> no_xyz
+    end.
 
 %% Check for pressed Fkeys
 fkey_combo() ->
@@ -1156,6 +1192,29 @@ add_constraints([true|Fkeys],[T|Tkeys]) ->
     [not T|add_constraints(Fkeys,Tkeys)];
 add_constraints([],[]) -> [].
 
+other_constraint_dir(move) ->
+    FKeys = dir_check(),
+    case FKeys of
+      {false,false,false} ->
+          case wings_pref:get_value(tweak_axis) of
+            screen -> move_screen;
+            normal -> move_normal;
+            planar_normal -> move_planar;
+            default -> move_default_axis;
+            planar_default -> move_default_planar
+          end;
+      {true,false,false} -> move_normal;
+      {false,true,false} -> move_planar;
+      {false,false,true} -> move_default_axis;
+      {false,true,true} -> move_default_planar;
+      _other_wise -> move_screen
+    end.
+
+dir_check() ->
+    F4 = wings_io:is_key_pressed(?SDLK_F4),
+    F5 = wings_io:is_key_pressed(?SDLK_F5),
+    F6 = wings_io:is_key_pressed(?SDLK_F6),
+    {F4,F5,F6}.
 
 %%%% Show Cursor
 %% After releasing lmb to conclude drag, unhide the cursor and make sure its
@@ -1209,24 +1268,19 @@ menu() ->
       {active,_}   -> {?__(6,"Disable Tweak"),
                        ?__(7,"Tweak is currently enabled; click to exit Tweak mode.")}
     end,
-    ScKey = keys_combo(screen),
-    NKey = keys_combo(normal),
+    ScKey = keys_combo(move),
     RKey = keys_combo(relax),
     SlKey = keys_combo(slide),
     SlColKey = keys_combo(slide_collapse),
-    TKey = keys_combo(tangent),
     SelKey = keys_combo(select),
     Menu =
       [{Toggle, toggle_tweak, TogHelp}, separator,
        {?__(17,"Magnets"),{tweak_magnet, tweak_magnet_menu()}},
-       {?__(18,"XYZ Constraints"),{constrainXYZ, xyz_constraints_menu()}},
+       {?__(18,"Axis Constraints"),{axis_constraint, constraints_menu()}},
        separator,
-       {mode(screen), tweak_menu_fun(screen),
+       {mode(move), tweak_menu_fun(move),
         wings_msg:join([?__(8,"Drag elements relative to screen."),
         [CurB, ScKey], Set, Swap, Del]), crossmark(ScKey)},
-       {mode(normal), tweak_menu_fun(normal),
-        wings_msg:join([?__(9,"Drag selection along average normal."),
-        [CurB, NKey], Set, Swap, Del]), crossmark(NKey)},
        {mode(relax),tweak_menu_fun(relax),
         wings_msg:join([?__(10,"Relax geometry."),
         [CurB, RKey], Set, Swap, Del]), crossmark(RKey)},
@@ -1236,24 +1290,19 @@ menu() ->
        {mode(slide_collapse),tweak_menu_fun(slide_collapse),
         wings_msg:join([?__(12,"Slide elements and collapse short edges."),
         [CurB, SlColKey],Set, Swap, Del]), crossmark(SlColKey)},
-       {mode(tangent),tweak_menu_fun(tangent),
-        wings_msg:join([?__(13,"Constrain drag to selection's average plane."),
-        [CurB, TKey], Set, Swap, Del]), crossmark(TKey)},
        {mode(select),tweak_menu_fun(select),
         wings_msg:join([?__(14,"Paint selection."),
         [CurB, SelKey], Set, Swap, Del]), crossmark(SelKey)},
        separator,
        {?__(23,"Tweak Preferences"),options_panel,?__(24,"Some additional preference options for Tweak")},
        {?__(15,"Help"),show_help,
-        ?__(16,"Tweak help panel")}],
+        ?__(16,"Information on using Tweak")}],
     Menu.
 
-mode(screen) -> ?__(1,"Move");
-mode(normal) -> ?__(2,"Normal");
+mode(move) -> ?__(1,"Move");
 mode(relax) -> ?__(3,"Relax");
 mode(slide) -> ?__(4,"Slide");
 mode(slide_collapse) -> ?__(5,"Slide Collapse");
-mode(tangent) -> ?__(6,"Tangent Plane");
 mode(select) -> ?__(7,"Paint Select").
 
 tweak_menu_fun(Mode) ->
@@ -1262,23 +1311,56 @@ tweak_menu_fun(Mode) ->
       (_,_) -> ignore
     end.
 
-xyz_constraints_menu() ->
+constraints_menu() ->
     [Fx,Fy,Fz] = wings_pref:get_value(tweak_xyz),
     F1 = case Fx of
-        true -> ?__(1,"Unlock X");
+        true -> ?__(1,"X Axis is Locked");
         false -> ?__(2,"Lock X")
     end,
     F2 = case Fy of
-        true -> ?__(3,"Unlock Y");
+        true -> ?__(3,"Y Axis is Locked");
         false -> ?__(4,"Lock Y")
     end,
     F3 = case Fz of
-        true -> ?__(5,"Unlock Z");
+        true -> ?__(5,"Z Axis is Locked");
         false -> ?__(6,"Lock Z")
     end,
-    Help = ?__(7,"If assigned, hotkeys can be used to toggle axis locking while Tweak is active."),
+
+    LN = ?__(10,"Lock Normal"),
+    NL = ?__(11,"Normal is Locked"),
+
+    LP = ?__(12,"Lock Normal Plane"),
+    NP = ?__(13,"Normal Plane is Locked"),
+
+    DA = ?__(14,"Lock Default Axis"),
+    DL = ?__(15,"Default Axis is Locked"),
+
+    LD = ?__(16,"Lock Default Plane"),
+    DP = ?__(17,"Default Plane is Locked"),
+
+    {Normal,NPlane,Default,DPlane} = case wings_pref:get_value(tweak_axis) of
+      screen -> {LN,LP,DA,LD};
+      normal -> {NL,LP,DA,LD};
+      planar_normal -> {LN,NP,DA,LD};
+      default -> {LN,LP,DL,LD};
+      planar_default -> {LN,LP,DA,DP}
+    end,
+
+    Nhelp1 = ?__(18,"Lock Normal"),
+    Nhelp2 = ?__(19,"Lock Normal Plane"),
+    Dhelp1 = ?__(20,"Lock Default Axis"),
+    Dhelp2 = ?__(21,"Lock Default Plane"),
+
+    Help = ?__(7,"If assigned (via Insert), a hotkey can (un)lock this axis while tweaking."),
     [{F1,x,Help}, {F2,y,Help}, {F3,z,Help}, separator,
-     {?__(8,"XYZ Panel"),panel}].
+     {?__(8,"XYZ Panel"),panel,?__(9,"Toggle xyz constraints")},
+    separator,
+     {Normal,normal,wings_msg:join([Help,Nhelp1]),[]},
+     {NPlane,planar_normal,wings_msg:join([Help,Nhelp2]),[]},
+     {Default,default,wings_msg:join([Help,Dhelp1]),[]},
+     {DPlane,planar_default,wings_msg:join([Help,Dhelp2]),[]},
+    separator,
+     {?__(22,"Clear Constraints"),clear,?__(23,"Clear all locked axes.")}].
 
 tweak_magnet_menu() ->
     {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
@@ -1356,9 +1438,9 @@ command(show_help, St) ->
     St;
 command(options_panel, St) ->
     tweak_options_dialog(St);
-command({constrainXYZ, panel}, St) ->
-    constraints_menu(St);
-command({constrainXYZ, Axis}, St) ->
+command({axis_constraint, panel}, St) ->
+    constraints_panel(St);
+command({axis_constraint, Axis}, St) ->
     set_axis_lock(Axis),
     St;
 command({Mode,B}, St) when B =< 3->
@@ -1369,8 +1451,8 @@ command({Mode,B}, St) when B =< 3->
     set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
     wings_wm:send(tweak_palette,{current_state,St}),
     St;
-command(Mode, St) when Mode =:= screen; Mode =:= normal; Mode =:= select;
-  Mode =:= slide; Mode =:= slide_collapse; Mode =:= relax; Mode =:= tangent ->
+command(Mode, St) when Mode =:= move; Mode =:= select;
+  Mode =:= slide; Mode =:= slide_collapse; Mode =:= relax ->
     set_tweak_pref(Mode, 1, {false, false, false}),
     wings_wm:send(tweak_palette,{current_state,St}),
     St;
@@ -1487,7 +1569,7 @@ set_values([{Key,Value}|Result]) ->
     set_values(Result);
 set_values([]) -> ok.
 
-constraints_menu(St) ->
+constraints_panel(St) ->
     [TX, TY, TZ] = wings_pref:get_value(tweak_xyz),
     X = wings_s:dir(x),
     Y = wings_s:dir(y),
@@ -1519,23 +1601,18 @@ set_tweak_prefs(Cam, TweakModes) ->
 %% {Bool, Bool, Bool} == {Crtl, Shift, Alt}
 default_prefs(maya) ->
     F = false,
-    T = true,
-    D = [{{1,{F,F,F}}, screen},
-         {{1,{T,F,F}}, normal},
+    D = [{{1,{F,F,F}}, move},
          {{2,{F,F,F}}, select}],
     orddict:from_list(D);
 default_prefs(mb) ->
     F = false,
-    T = true,
-    D = [{{1,{F,F,F}}, screen},
-         {{2,{T,F,F}}, normal},
+    D = [{{1,{F,F,F}}, move},
          {{2,{F,F,F}}, select}],
     orddict:from_list(D);
 default_prefs(_) -> % when wings_cam, blender, sketchup, nendo, mirai, tds
     F = false,
     T = true,
-    D = [{{1,{F,F,F}}, screen},
-         {{1,{T,F,F}}, normal},
+    D = [{{1,{F,F,F}}, move},
          {{1,{F,F,T}}, select}],
     orddict:from_list(D).
 
@@ -1581,11 +1658,9 @@ click_select() ->
       false -> []
     end.
 
-draw_tweak_info_line(M) ->
+draw_tweak_info_line(Msg) ->
     {_,H} = wings_wm:win_size(),
-    wings_io:ortho_setup(),
-    wings_io:set_color(wings_pref:get_value(menu_text)),
-    wings_io:text_at(0 + ?CHAR_WIDTH, H-?CHAR_HEIGHT div 2, M).
+    wings_io:info(0,H-?LINE_HEIGHT-2,Msg).
 
 %%
 %%% Help Window
@@ -1599,7 +1674,7 @@ draw_tweak_info_line(M) ->
      line=[],	% line acc
      res=[]}).	% Result
 
--define(SPACE, $ ). % unicode space
+-define(SPACE, $\s). % unicode space
 -define(NL, $\n). 	% unicode new line
 -define(TAB, $\t). 	% unicode tab (but we sub in 2 spaces)
 
@@ -1614,17 +1689,32 @@ info_box(Text0, {W,_}) ->
 
 help_msg() ->
     [help_msg_hotkeys(), cr(),
+     help_msg_tool_change(), cr(),
      help_msg_magnet_radius(), cr(),
      help_msg_magnet_hotkeys(), cr(),
-     help_msg_tool_change(), cr(),
      help_msg_deselect(), cr(),
      help_msg_camera(), cr(),
      help_msg_view_menu(), cr(),
      help_msg_general()].
 
 help_msg_hotkeys() ->
-    [?__(1,"Before using hotkeys for magnets, constriants, or view menu items, first release any modifier keys that are pressed."),
-     ?__(3,"As long as the current mouse button is held down, the current tool will remain active.")].
+    [{bold,?__(c,"Tweak Help Is A Work In Porgress.")},cr(),
+     ?__(1,"--How to use Tweak--"),"\n",
+     ?__(2,"Tweak mode allows you to edit a model quickly by clicking and dragging elements with the mouse."),cr(),
+     ?__(3,"While you are in Tweak Mode, all of the normal functionality of Wings is still available but in addition you may use as many or as few of the tweak tools you wish to have accessible as well."),cr(),
+     ?__(4,"Tweak tools are activated in several way, most commonly via a modifier key combo while pressing a mouse button."),
+     ?__(5,"Key combos can be bound to the different Tweak tools in the Tweak menu or by hovering over items in the Tweak Palette."),
+
+     ?__(a,"Before using hotkeys for magnets, constriants, or view menu items, first release any modifier keys that are pressed."),
+     ?__(b,"As long as the current mouse button is held down, the current tool will remain active.")].
+
+help_msg_tool_change() ->
+   [?__(1,"There are various methods for switching Tweak tools on the fly. In this way it is possible to 'chain' the tool's effects and therefore be able to undo fairly complex adjustment all at once.\n"),
+    ?__(2,"\t-Select a tool via the Tweak menu or Tweak Palette with the Left Mouse Button."),
+    ?__(3,"This in essence, binds that tool to the Lmb.\n"),
+    ?__(5,"\t-Press a hotkey assigned to any Tweak tool via the Insert method."),
+    ?__(6,"This switches Lmb's current function to that tool, even when called during a tweak drag.\n"),
+    ?__(4,"\t-Press any modifier key combo that has been bound to a tool in the Tweak Menu.\n")].
 
 help_msg_magnet_radius() ->
      [?__(1,"To adjust the Magnet Radius, first release any modifier keys, and then press [Alt]."),
@@ -1635,15 +1725,6 @@ help_msg_magnet_hotkeys() ->
     [?__(1,"You can setup hotkeys in the Tweak menu for turning the magnet on or off, or changing the magnet type while tweaking."),
      ?__(2,"Go to Tweak Menu|Magnets and use the standard Insert hotkey method to do so."),
      ?__(3,"If these keys are set, you can call them in mid drag to see how the different magnet options affect the result.")].
-
-help_msg_tool_change() ->
-   [?__(1,"There are various ways to switch Tweak tools on the fly:\n"),
-    ?__(2,"\t-Use the Tweak menu to select a tool by pressing Lmb."),
-    ?__(3,"This will bind Lmb to that tool.\n"),
-    ?__(5,"\t-Press a hotkey assigned to any Tweak tool via the Insert method."),
-    ?__(6,"This switches Lmb's current function to that tool, even when called during a tweak drag.\n"),
-    ?__(4,"\t-Press any modifier key combo that has been bound to a tool in the Tweak Menu.\n"),
-    ?__(7,"\t-Selecting a tool via the Tweak Palette which can be left open.")].
 
 help_msg_deselect() ->
     [?__(1,"Press Spacebar to return to the tool assigned to Lmb."),
@@ -1817,17 +1898,24 @@ update_scroller(Knob,Lines) ->
 %%
 
 %% XYZ Constraints info line
-mode_message(screen) ->
+mode_message_1(Mode) when Mode =:= move ->
     Help1 = ?__(1,"Hold to Constrain XYZ"),
     Help2 = ?__(2,"Bold Fkeys are Locked (see Tweak menu)."),
-    Help3 = ?__(3,"Held keys cancel out Locked axes."),
-    Cam = camera_msg(),
-    Help = wings_msg:join([[fkey_help(),Help1],Help2,Help3,Cam]),
-    wings_wm:message(Help);
-mode_message(Mode) ->
+    Help3 = ?__(3,"Held Fkeys cancel out Locked axes."),
+    Help4 = ?__(4,"\n[F4]: Constrain Normal"),
+    Help5 = ?__(5,"[F5]: Constrain Plane"),
+    Help6 = ?__(6,"[F6]: Constrain Default Axis"),
+    Help7 = ?__(7,"[F5]+[F6]: Constrain Default Plane"),
+    {_,H} = wings_wm:win_size(),
+    Help = wings_msg:join([[fkey_help(),Help1],Help2,Help3,Help4,Help5,Help6,Help7]),
+    wings_io:info(0, H - ?LINE_HEIGHT * 3 -4, Help);
+mode_message_1(_) ->
+    ok.
+mode_message_2(Mode) ->
     M = mode(Mode),
     Cam = camera_msg(),
-    Help = wings_msg:join([M, Cam]),
+    Spc = spacebar_msg(),
+    Help = wings_msg:join([M, Cam, Spc]),
     wings_wm:message(Help).
 
 fkey_help() ->
@@ -1843,18 +1931,29 @@ modifier({Ctrl,Shift,Alt}) ->
     A = if Alt -> [wings_s:key(alt),"+"]; true -> [] end,
     [C,S,A].
 
-set_axis_lock(Axis) ->
+set_axis_lock(clear) ->
+    wings_pref:set_value(tweak_xyz,[false,false,false]),
+    wings_pref:set_value(tweak_axis, screen);
+set_axis_lock(Axis) when Axis =:= x; Axis =:= y; Axis =:= z->
     [X,Y,Z] = wings_pref:get_value(tweak_xyz),
     NewPref = case Axis of
       x -> [not X, Y, Z];
       y -> [X, not Y, Z];
       z -> [X, Y, not Z]
     end,
-    wings_pref:set_value(tweak_xyz, NewPref).
+    wings_pref:set_value(tweak_axis, screen),
+    wings_pref:set_value(tweak_xyz, NewPref);
+set_axis_lock(Axis) ->
+    wings_pref:set_value(tweak_xyz,[false,false,false]),
+    case wings_pref:get_value(tweak_axis) of
+      Axis -> wings_pref:set_value(tweak_axis,screen);
+      _otherwise -> wings_pref:set_value(tweak_axis, Axis)
+    end.
 
 camera_msg() ->
     ?__(1,"[C]: Tumble camera").
-
+spacebar_msg() ->
+    ?__(1,"[SpcBar]: Switch to Tweak tool assigned to L").
 %% Info line for tweak magnet
 tweak_magnet_help() ->
     {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
@@ -2000,7 +2099,7 @@ valid_menu_items([I|Menu]) ->
       {Name,Cmd,Help,Bound} when is_function(Cmd) -> %% menu format
         C = Cmd(1,[]), %% change fun to cmd name.. 1 is for lmb
         [{Name,C,Help,Bound}|valid_menu_items(Menu)];
-%      {_,{constrainXYZ,_}}=C ->
+%      {_,{axis_constraint,_}}=C ->
 %        [C|valid_menu_items(Menu)];
       _ ->
         valid_menu_items(Menu)
@@ -2013,7 +2112,7 @@ draw_tweak_palette(#tw{menu=Menu,lh=Lh}=Tw) ->
 draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, lmb=Mode}=Tw) ->
     {R,G,B} = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
-    wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
+    wings_io:gradient_border(X1-1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
@@ -2023,7 +2122,7 @@ draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, curr
     Colour = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:set_color(wings_pref:get_value(menu_hilite)),
-    wings_io:gradient_rect(X1, Y1, X2-X1, Y2-Y1, Colour),
+    wings_io:gradient_rect(X1-1, Y1, X2-X1+1, Y2-Y1, Colour),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
@@ -2032,7 +2131,7 @@ draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, curr
 draw_tweak_menu_items([{Name,{_,{Mode,_}},_,_}|Menu], Y, #tw{lh=Lh, w=W,lmb=Mode}=Tw) ->
     {R,G,B,A} = wings_pref:get_value(menu_color),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
-    wings_io:gradient_border(X1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
+    wings_io:gradient_border(X1-1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8,A}),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,

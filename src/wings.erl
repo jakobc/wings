@@ -219,7 +219,7 @@ redraw(Info, St) ->
 		wings_render:render(St),
 		call_post_hook(St),
 		case Info =/= [] andalso wings_wm:get_prop(show_info_text) of
-		    true -> wings_io:info(Info),
+		    true -> wings_io:info(0,0,Info),
 		            wings_tweak:tweak_buttons();
 		    false -> ok
 		end
