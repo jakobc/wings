@@ -67,7 +67,19 @@ init() ->
     set_tweak_pref(screen, 3, {false,false,false}),
     set_tweak_pref(normal, 3, {false,false,false}),
     set_tweak_pref(tangent, 3, {false,false,false}),
+    fix_prefs(),
     true.
+
+%% Get rid of obsolete prefs
+fix_prefs() ->
+    {A,Prefs0} = wings_pref:get_value(tweak_prefs),
+    Prefs = orddict:fold(fun(Cam,V0,PrefAcc) ->
+        V1 = lists:keydelete(screen,2,V0),
+        V2 = lists:keydelete(normal,2,V1),
+        V3 = lists:keydelete(tangent,2,V2),
+        orddict:store(Cam,V3,PrefAcc)
+        end,Prefs0,Prefs0),
+    wings_pref:set_value(tweak_prefs, {A, Prefs}).
 
 tweak_event(Ev, St) ->
     Prefs = wings_pref:get_value(tweak_prefs),
