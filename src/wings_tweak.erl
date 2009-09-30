@@ -63,6 +63,7 @@ init() ->
     wings_pref:set_default(tweak_click_speed,200000),
     wings_pref:set_default(tweak_mag_adj_sensitivity,0.01),
     wings_pref:set_default(tweak_axis,screen),
+    wings_pref:set_default(tweak_sb_clears_constraints,true),
     set_tweak_pref(screen, 3, {false,false,false}),
     set_tweak_pref(normal, 3, {false,false,false}),
     set_tweak_pref(tangent, 3, {false,false,false}),
@@ -1135,8 +1136,21 @@ is_tweak_hotkey(_, T) ->
       false -> T
     end.
 
-is_tweak_combo(#tweak{st=#st{selmode=body}}=T) -> T;
+is_tweak_combo(#tweak{st=#st{selmode=body}}=T) ->
+    case wings_pref:get_value(tweak_sb_clears_constraints) of
+      true ->
+        wings_pref:set_value(tweak_xyz,[false,false,false]),
+        wings_pref:set_value(tweak_axis,screen);
+      false -> ok
+    end,
+    T;
 is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
+    case wings_pref:get_value(tweak_sb_clears_constraints) of
+      true ->
+        wings_pref:set_value(tweak_xyz,[false,false,false]),
+        wings_pref:set_value(tweak_axis,screen);
+      false -> ok
+    end,
     {B,X,Y} = wings_io:get_mouse_state(),
     Ctrl = wings_io:is_modkey_pressed(?CTRL_BITS),
     Shift = wings_io:is_modkey_pressed(?SHIFT_BITS),
@@ -1535,7 +1549,8 @@ tweak_options_dialog(St) ->
         {hook,ClickHook}]}}],
        [{title,?__(3,"Click Speed")}]},
        {hframe,[{slider,{text,MagAdj,[{key,tweak_mag_adj_sensitivity},{range,{0.1,2.0}}]}}],
-       [{title,?__(5,"Magnet Adjust Sensitivity")}]}
+       [{title,?__(5,"Magnet Adjust Sensitivity")}]},
+       {?__(6,"Spacebar Clears Axis Constraints"),tweak_sb_clears_constraints}
       ]}],
     PrefQs = [{Lbl, make_query(Ps)} || {Lbl, Ps} <- Menu],
     wings_ask:dialog(true, ?__(4,"Tweak Preferences"), PrefQs,
