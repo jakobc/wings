@@ -1118,6 +1118,13 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
           Pref = wings_pref:get_value(tweak_magnet),
           wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
           T0#tweak{mag_rad=1.0};
+      {tweak_magnet, cycle_magnet} ->
+          NewMag = cycle_magnet(),
+          set_magnet_type(NewMag),
+          T = T0#tweak{mag_type=NewMag},
+          tweak_magnet_help(),
+          setup_magnet(T),
+          T;
       {tweak_magnet, MagType} ->
           set_magnet_type(MagType),
           {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
@@ -1400,13 +1407,17 @@ tweak_magnet_menu() ->
          ?__(6,"Press [Insert] to add a hotkey for adjusting the magnet radius. ") ++
          ?__(7,"If no hotkey is assigned, the magnet radius adjustment key defaults to [Alt].")},
     Reset = {?__(8,"Reset Radius"), reset_radius,?__(9,"Reset the magnet radius")},
+    Cycle = {?__(10,"Next Magnet Type"), cycle_magnet, ?__(11,"If hotkeyed, you can cycle through the different magnet types.")},
     Dome = {magnet_type(dome), dome, mag_thelp(dome),
             crossmark({dome, MagType})},
     Straight = {magnet_type(straight), straight, mag_thelp(straight),
                 crossmark({straight, MagType})},
     Spike = {magnet_type(spike), spike, mag_thelp(spike),
       crossmark({spike, MagType})},
-    [{Toggle, toggle_magnet, Help}, MagAdj, Reset, separator, Dome, Straight, Spike].
+    [{Toggle, toggle_magnet, Help}, separator,
+      Dome, Straight, Spike, separator,
+      Reset, separator,
+      Cycle, MagAdj].
 
 magnet_type(dome) -> ?__(1,"Dome");
 magnet_type(straight) -> ?__(2,"Straight");
@@ -1417,6 +1428,14 @@ mag_thelp(straight) -> ?__(2,"This magnet pulls and pushes geometry with a strai
 mag_thelp(spike) -> ?__(3,"This magnet pulls and pushes geometry out to a sharp point.").
 
 magnet_radius() -> ?__(1,"Magnet Radius").
+
+cycle_magnet() ->
+    {_,Mag,_} = wings_pref:get_value(tweak_magnet),
+    case Mag of
+      dome -> straight;
+      straight -> spike;
+      spike -> dome
+    end.
 
 crossmark({MagType, MagType}) -> [crossmark];
 crossmark({_, MagType}) when is_atom(MagType)-> [];
@@ -1453,6 +1472,10 @@ command({tweak_magnet, toggle_magnet}, St) ->
 command({tweak_magnet, reset_radius}, St) ->
     Pref = wings_pref:get_value(tweak_magnet),
     wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
+    St;
+command({tweak_magnet, cycle_magnet}, St) ->
+    NewMag = cycle_magnet(),
+    set_magnet_type(NewMag),
     St;
 command({tweak_magnet, mag_adjust}, St) ->
     St;
