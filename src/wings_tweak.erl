@@ -1066,23 +1066,18 @@ draw_magnet_1(#dlo{src_sel={Mode,Els},src_we=We,mirror=Mtx,drag=#drag{mm=Side}},
 
 draw_magnet_1(_, _) -> [].
 
-mirror_info(#we{mirror=none}) -> {[],none};
+mirror_info(#we{mirror=none}) -> {[],identity};
 mirror_info(#we{mirror=Face}=We) ->
-    PlaneNormal = wings_face:normal(Face, We),
-    FaceVs = wpa:face_vertices(Face, We),
-    Origin = wings_vertex:center(FaceVs, We),
-    M0 = e3d_mat:translate(Origin),
-    M = e3d_mat:mul(M0, e3d_mat:project_to_plane(PlaneNormal)),
-    Flatten = e3d_mat:mul(M, e3d_mat:translate(e3d_vec:neg(Origin))),
+    FaceVs = wings_face:vertices_ccw(Face, We),
+    Flatten = wings_we:mirror_projection(We),
     {FaceVs,Flatten}.
 
 mirror_matrix(V, {MirrorVs,Flatten}) ->
     case member(V, MirrorVs) of
-    false -> none;
-    true -> Flatten
+	false -> identity;
+	true -> Flatten
     end.
 
-mirror_constrain(none, Pos) -> Pos;
 mirror_constrain(Matrix, Pos) -> e3d_mat:mul_point(Matrix, Pos).
 
 %%%%
