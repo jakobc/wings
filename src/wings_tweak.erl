@@ -126,7 +126,7 @@ handle_tweak_event_0(#keyboard{sym=Sym}=Ev, #tweak{magnet=true,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
-          case wings_hotkey:event(Ev,St) of
+          case wings_hotkey:event(Ev,St#st{sel=[]}) of
               {tweak,{tweak_magnet,mag_adjust}} ->
                 magnet_adjust(T#tweak{mag_key=Sym});
               _ -> next
@@ -263,7 +263,7 @@ handle_tweak_drag_event(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
       true ->
-          case wings_hotkey:event(Ev,St) of
+          case wings_hotkey:event(Ev,St#st{sel=[]}) of
               {tweak,{tweak_magnet,mag_adjust}}=Cmd ->
                 if Mag ->
                     B = wings_hotkey:bindkey(Ev, Cmd),
@@ -307,7 +307,7 @@ tweak_drag_mag_adjust(#tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
 
 %% Catch hotkeys for toggling xyz constraints and magnet attributes
 handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
-    case wings_hotkey:event(Ev,St) of
+    case wings_hotkey:event(Ev,St#st{sel=[]}) of
       next ->
           update_tweak_handler(is_tweak_combo(T));
       {tweak,{tweak_magnet,mag_adjust}}=Cmd ->
@@ -397,7 +397,7 @@ handle_magnet_event(#mousemotion{x=X, y=Y},
 handle_magnet_event(#keyboard{sym=Sym},#tweak{mag_key=Sym}) ->
     keep;
 handle_magnet_event(#keyboard{}=Ev,#tweak{st=St}=T) ->
-    case wings_hotkey:event(Ev,St) of
+    case wings_hotkey:event(Ev,St#st{sel=[]}) of
         {tweak,{tweak_magnet,reset_radius}} ->
             Pref = wings_pref:get_value(tweak_magnet),
             wings_pref:set_value(tweak_magnet,setelement(3,Pref,1.0)),
@@ -555,7 +555,7 @@ end_drag(#tweak{mode=Mode, id={P,{OrigId,El}}, ox=X,oy=Y,cx=Cx,cy=Cy, st=St0}) -
                          wings_io:ungrab(X,Y),
                          end_pick(P, OrigId, El, D, St1);
                      true ->
-                         {D,St1}
+                         {D#dlo{vs=none,sel=none,drag=none},St1}
                   end;
             (#dlo{src_we=#we{id=Id}}=D,St1) ->
                   if OrigId =:= Id -> show_cursor(El,D); true -> ok end,
@@ -574,7 +574,8 @@ end_pick(del, Id, El0, #dlo{src_sel={Mode,_}}=D, #st{sel=Sel0}=St) ->
     Sel = case gb_sets:is_empty(El) of
         false ->
           lists:sort(orddict:store(Id,El,Sel0));
-        true -> lists:sort(orddict:erase(Id,Sel0))
+        true ->
+          lists:sort(orddict:erase(Id,Sel0))
     end,
     {D#dlo{vs=none,sel=none,drag=none}, St#st{selmode=Mode,sel=Sel,sh=false}};
 end_pick(_, Id, El0, #dlo{src_sel={Mode,_}}=D, #st{sel=Sel0}=St) ->
