@@ -1515,11 +1515,11 @@ save_window(Name, Ns) ->
     {MaxX,_} = wings_wm:win_size(desktop),
     {PosX0,PosY} = case Name of
       tweak_palette ->
-        wings_wm:win_ul({controller,Name});
+        wings_wm:win_ul(tweak_palette);
       tweak_mag_palette ->
-        wings_wm:win_ul({controller,Name});
+        wings_wm:win_ul(tweak_mag_palette);
       tweak_axis_palette ->
-        wings_wm:win_ul({controller,Name});
+        wings_wm:win_ul(tweak_axis_palette);
       _ ->
         wings_wm:win_ur({controller,Name})
     end,
