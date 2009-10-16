@@ -712,8 +712,10 @@ command_1({window,palette}, St) ->
 command_1({window,console}, _St) ->
     wings_console:window(),
     keep;
-command_1({window,tweak_palette}, _St) ->
-    wings_tweak:window(),
+command_1({window,tweak_palette}, St) ->
+    wings_tweak:window(St),
+    wings_tweak:mag_window(St),
+    wings_tweak:axis_window(St),
     keep;
 
 %% Body menu.
@@ -906,7 +908,7 @@ window_menu(_) ->
       ?__(5,"Open a Geometry Graph window (showing objects)")},
      {?__(6,"Palette"), palette,?__(7,"Open the color palette window")},
      {?__(12,"Tweak Palette"), tweak_palette,
-      ?__(13,"Open a palette from which tweak tools may be selected or bound to modifier keys")},
+      ?__(13,"Open palettes from which tweak tools may be selected or bound to modifier keys")},
      separator,
      {?__(8,"New Geometry Window"),geom_viewer, ?__(9,"Open a new Geometry window")},
      {?__(10,"Console"),console,?__(11,"Open a console window for information messages")}].
@@ -1494,6 +1496,10 @@ save_windows_1([palette|Ns]) ->
     save_window(palette, Ns);
 save_windows_1([tweak_palette|Ns]) ->
     save_window(tweak_palette, Ns);
+save_windows_1([tweak_mag_palette|Ns]) ->
+    save_window(tweak_mag_palette, Ns);
+save_windows_1([tweak_axis_palette|Ns]) ->
+    save_window(tweak_axis_palette, Ns);
 save_windows_1([outliner|Ns]) ->
     save_window(outliner, Ns);
 save_windows_1([{object,_}=N|Ns]) ->
@@ -1507,7 +1513,16 @@ save_windows_1([]) -> [].
 
 save_window(Name, Ns) ->
     {MaxX,_} = wings_wm:win_size(desktop),
-    {PosX0,PosY} = wings_wm:win_ur({controller,Name}),
+    {PosX0,PosY} = case Name of
+      tweak_palette ->
+        wings_wm:win_ul({controller,Name});
+      tweak_mag_palette ->
+        wings_wm:win_ul({controller,Name});
+      tweak_axis_palette ->
+        wings_wm:win_ul({controller,Name});
+      _ ->
+        wings_wm:win_ur({controller,Name})
+    end,
     PosX = if PosX0 < 0 -> 20; PosX0 > MaxX -> 20; true -> PosX0 end,
     Size = wings_wm:win_size(Name),
     W = {Name,{PosX,PosY},Size},
@@ -1573,7 +1588,13 @@ restore_windows_1([{palette,{_,_}=Pos,{_,_}=Size}|Ws], St) ->
     wings_palette:window(validate_pos(Pos),Size,St),
     restore_windows_1(Ws, St);
 restore_windows_1([{tweak_palette,{_,_}=Pos,_}|Ws], St) ->
-    wings_tweak:window(Pos),
+    wings_tweak:window(validate_pos(Pos), St),
+    restore_windows_1(Ws, St);
+restore_windows_1([{tweak_mag_palette,{_,_}=Pos,_}|Ws], St) ->
+    wings_tweak:mag_window(validate_pos(Pos), St),
+    restore_windows_1(Ws, St);
+restore_windows_1([{tweak_axis_palette,{_,_}=Pos,_}|Ws], St) ->
+    wings_tweak:axis_window(validate_pos(Pos), St),
     restore_windows_1(Ws, St);
 restore_windows_1([_|Ws], St) ->
     restore_windows_1(Ws, St);
