@@ -813,13 +813,35 @@ weld(Ask, _) when is_atom(Ask) ->
 weld([Tolerance], St0) ->
     St1 = combine(St0),
     {St2,Sel} = wings_sel:mapfold(fun(_, We, Acc) ->
-					  weld_1(Tolerance, We, Acc)
+					  weld_0(Tolerance, We, Acc)
 				  end, [], St1),
-    St = wings_sel:set(vertex, Sel, St2),
+    {St4,Sel2} = wings_sel:mapfold(fun(F, We1, Acc1) ->
+					  weld_1(Tolerance, F, We1, Acc1)
+				  end, [], wings_sel:set(face, Sel, St2)),
+    St = wings_sel:set(vertex, Sel2, St4),
     {save_state,wings_sel:valid_sel(St)}.
 
-weld_1(Tol, #we{id=Id,fs=Fs0}=We0, Acc) ->
+weld_0(Tol, #we{id=Id,fs=Fs0}=We0, Acc) ->
     Fs = weld_1_list(gb_trees:keys(Fs0), Tol, We0, []),
+    R = sofs:relation(Fs, [{key,face}]),
+    F = sofs:relation_to_family(R),
+    Part0 = sofs:range(F),
+    Part1 = sofs:specification({external,fun([_]) -> false;
+					    (_) -> true end}, Part0),
+    Part = sofs:to_external(Part1),
+    Faces = gb_sets:from_list(lists:merge(Part)),
+    F1 = gb_sets:size(Faces),
+    F2 = gb_trees:size(Fs0),
+    case F1 =:= F2 of
+      false ->
+        We = wings_dissolve:faces(Faces, We0),
+        Sel = wings_we:new_items_as_gbset(face, We0, We),
+        {We,[{Id,Sel}|Acc]};
+      true ->
+	    wings_u:error(?__(1,"Tolerance may be to high."))
+    end.
+weld_1(Tol, Fs0, #we{id=Id}=We0, Acc) ->
+    Fs = weld_1_list(gb_sets:to_list(Fs0), Tol, We0, []),
     R = sofs:relation(Fs, [{key,face}]),
     F = sofs:relation_to_family(R),
     Part0 = sofs:range(F),
@@ -838,7 +860,7 @@ weld_1_list([F|Fs], Tol, We, Acc) ->
 	   fun(V, _, _, Acc0) ->
 		   [V|Acc0]
 	   end, [], F, We),
-    {X,Y,Z} = wings_vertex:center(Vs, We),
+    C = {X,Y,Z} = wings_vertex:center(Vs, We),
     Center = {granularize(X, Tol),granularize(Y, Tol),granularize(Z, Tol)},
     weld_1_list(Fs, Tol, We, [{{length(Vs),Center},F}|Acc]);
 weld_1_list([], _, _, Acc) -> Acc.
