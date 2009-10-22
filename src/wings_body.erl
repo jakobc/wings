@@ -822,15 +822,9 @@ weld([Tolerance], St0) ->
     {save_state,wings_sel:valid_sel(St)}.
 
 weld_0(Tol, #we{id=Id,fs=Fs0}=We0, Acc) ->
-    Fs = weld_1_list(gb_trees:keys(Fs0), Tol, We0, []),
-    R = sofs:relation(Fs, [{key,face}]),
-    F = sofs:relation_to_family(R),
-    Part0 = sofs:range(F),
-    Part1 = sofs:specification({external,fun([_]) -> false;
-					    (_) -> true end}, Part0),
-    Part = sofs:to_external(Part1),
-    Faces = gb_sets:from_list(lists:merge(Part)),
-    F1 = gb_sets:size(Faces),
+    Part = weld_candidates(gb_trees:keys(Fs0), Tol, We0),
+    Faces = lists:merge(Part),
+    F1 = length(Faces),
     F2 = gb_trees:size(Fs0),
     case F1 =:= F2 of
 	false ->
@@ -842,13 +836,7 @@ weld_0(Tol, #we{id=Id,fs=Fs0}=We0, Acc) ->
     end.
 
 weld_1(Tol, Fs0, #we{id=Id}=We0, Acc) ->
-    Fs = weld_1_list(gb_sets:to_list(Fs0), Tol, We0, []),
-    R = sofs:relation(Fs, [{key,face}]),
-    F = sofs:relation_to_family(R),
-    Part0 = sofs:range(F),
-    Part1 = sofs:specification({external,fun([_]) -> false;
-					    (_) -> true end}, Part0),
-    Part = sofs:to_external(Part1),
+    Part = weld_candidates(gb_sets:to_list(Fs0), Tol, We0),
     case weld_2(Part, Tol, We0) of
 	We0 ->
 	    wings_u:error(?__(1,"Found no faces to weld."));
@@ -856,15 +844,24 @@ weld_1(Tol, Fs0, #we{id=Id}=We0, Acc) ->
 	    {We,[{Id,weld_selection(lists:append(Part), We0, We)}|Acc]}
     end.
 
-weld_1_list([F|Fs], Tol, We, Acc) ->
+weld_candidates(Fs0, Tol, We) ->
+    Fs = weld_candidates_1(Fs0, Tol, We, []),
+    R = sofs:relation(Fs, [{key,face}]),
+    F = sofs:relation_to_family(R),
+    Part0 = sofs:range(F),
+    Part = sofs:specification({external,fun([_]) -> false;
+					    (_) -> true end}, Part0),
+    sofs:to_external(Part).
+
+weld_candidates_1([F|Fs], Tol, We, Acc) ->
     Vs = wings_face:fold(
 	   fun(V, _, _, Acc0) ->
 		   [V|Acc0]
 	   end, [], F, We),
     {X,Y,Z} = wings_vertex:center(Vs, We),
     Center = {granularize(X, Tol),granularize(Y, Tol),granularize(Z, Tol)},
-    weld_1_list(Fs, Tol, We, [{{length(Vs),Center},F}|Acc]);
-weld_1_list([], _, _, Acc) -> Acc.
+    weld_candidates_1(Fs, Tol, We, [{{length(Vs),Center},F}|Acc]);
+weld_candidates_1([], _, _, Acc) -> Acc.
 
 granularize(F, Tol) -> Tol*round(F/Tol).
 
