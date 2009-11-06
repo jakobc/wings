@@ -209,9 +209,11 @@ handle_tweak_drag_event(redraw, #tweak{mode=Mode,st=St}=T) ->
     mode_message_1(Mode),
     mode_message_2(Mode),
     tweak_drag_no_redraw(T);
+
+% Tweak Modes that can be modified by xyz constraints
 handle_tweak_drag_event(#mousemotion{x=X, y=Y},
             #tweak{mode=TwkMode, cx=CX, cy=CY, ox=OX, oy=OY}=T0)
-            when TwkMode =:= move ->
+            when TwkMode =:= move; TwkMode =:= scale ->
     {GX,GY} = wings_wm:local2global(X, Y),
     DX = GX-OX, %since last move X
     DY = GY-OY, %since last move Y
@@ -680,45 +682,80 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
     {Px,Py,Pz} = Pos0,
     {Vtab,Mag} =
     case Mode of
-        xmove -> Pos = {Tx,Py,Pz},
-             magnet_tweak(Mag0, Pos);
-        ymove -> Pos = {Px,Ty,Pz},
-             magnet_tweak(Mag0, Pos);
-        zmove -> Pos = {Px,Py,Tz},
-             magnet_tweak(Mag0, Pos);
-        xymove -> Pos = {Tx,Ty,Pz},
-              magnet_tweak(Mag0, Pos);
-        yzmove -> Pos = {Px,Ty,Tz},
-              magnet_tweak(Mag0, Pos);
-        zxmove -> Pos = {Tx,Py,Tz},
-              magnet_tweak(Mag0, Pos);
-        relax -> Pos = TweakPos,
-              Len = abs(DxOrg) / 600.0,
-              Len1 = case Len > 1 of
-                   true -> 1.0;
-                   false -> Len
-              end,
-              relax_magnet_tweak_fn(Mag0, Pos, We, Len1);
-        slide -> Pos = TweakPos,
-              magnet_tweak_slide_fn(Mag0, We,Orig,TweakPos);
-        slide_collapse -> Pos = TweakPos,
-              magnet_tweak_slide_fn(Mag0, We,Orig,TweakPos);
-        move_normal -> Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
-              magnet_tweak(Mag0, Pos);
-        move_planar -> Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
-              magnet_tweak(Mag0, Pos);
-        move_default_axis -> Pos = tweak_default_axis(Pos0, TweakPos),
-              magnet_tweak(Mag0, Pos);
-        move_default_planar -> Pos = tweak_default_tangent(Pos0, TweakPos),
-              magnet_tweak(Mag0, Pos);
-        _ 	-> Pos = TweakPos,
-              magnet_tweak(Mag0, Pos)
+        xmove ->
+            Pos = {Tx,Py,Pz},
+            magnet_tweak(Mag0, Pos);
+        ymove ->
+            Pos = {Px,Ty,Pz},
+            magnet_tweak(Mag0, Pos);
+        zmove ->
+            Pos = {Px,Py,Tz},
+            magnet_tweak(Mag0, Pos);
+        xymove ->
+            Pos = {Tx,Ty,Pz},
+            magnet_tweak(Mag0, Pos);
+        yzmove ->
+            Pos = {Px,Ty,Tz},
+            magnet_tweak(Mag0, Pos);
+        zxmove ->
+            Pos = {Tx,Py,Tz},
+            magnet_tweak(Mag0, Pos);
+        relax ->
+            Pos = TweakPos,
+            Len = abs(DxOrg) / 600.0,
+            Len1 = case Len > 1 of
+                 true -> 1.0;
+                 false -> Len
+            end,
+            relax_magnet_tweak_fn(Mag0, Pos, We, Len1);
+        slide ->
+            Pos = TweakPos,
+            magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
+        slide_collapse ->
+            Pos = TweakPos,
+            magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
+        move_normal ->
+            Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
+            magnet_tweak(Mag0, Pos);
+        move_planar ->
+            Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
+            magnet_tweak(Mag0, Pos);
+        move_default_axis ->
+            Pos = tweak_default_axis(Pos0, TweakPos),
+            magnet_tweak(Mag0, Pos);
+        move_default_planar ->
+            Pos = tweak_default_tangent(Pos0, TweakPos),
+            magnet_tweak(Mag0, Pos);
+        scale_screen -> % uniform
+            Pos = tweak_scale(Pos0, TweakPos, Mag0, We),
+            magnet_tweak(Mag0, Pos);
+        _ 	->
+            Pos = TweakPos,
+            magnet_tweak(Mag0, Pos)
     end,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 do_tweak(D, _, _, _, _, _) -> D.
 
+%%%% Scale
+tweak_scale(Pos, TweakPos, #mag{vs=Vs}=Mag, We) ->
+    Vec = e3d_vec:sub(Pos, TweakPos),
+    Center = wings_vertex:center(Vs, We),
+    
+
 %%%% Relax
+relax_magnet_tweak_fn(#mag{vs=Vs}=Mag, _,We,Weight) ->
+    Vtab = foldl(fun({V,P0,Plane,_,1.0}, A) ->
+               P1=relax_vec_fn(V,We,P0,Weight),
+               P = mirror_constrain(Plane, P1),
+               [{V,P}|A];
+            ({V,P0,Plane,_,Inf}, A) ->
+               P1=relax_vec_fn(V,We,P0,Weight*Inf),
+               P = mirror_constrain(Plane, P1),
+               [{V,P}|A]
+         end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
+
 relax_vec_fn(V, #we{}=We,Pos0,Weight) ->
     Vec = relax_vec(V,We),
     D = e3d_vec:sub(Vec,Pos0),
@@ -741,6 +778,14 @@ collect_neib_verts_coor(V,We)->
     foldl(fun(E,B) -> [wings_vertex:pos(E,We)|B] end,[],VertList).
 
 %%%% Slide
+magnet_tweak_slide_fn(#mag{vs=Vs}=Mag, We,Orig,TweakPos) ->
+    Vtab = foldl(fun({V,P0,Plane,_,Inf}, A) ->
+             P1=slide_vec_w(V,P0,Orig,TweakPos,We,Inf,Vs),
+             P = mirror_constrain(Plane, P1),
+             [{V,P}|A]
+         end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
+
 slide_vec_w(V, Vpos, VposS, TweakPosS, We, W,Vs) ->
     Dv = e3d_vec:sub(VposS,Vpos),
     TweakPos = e3d_vec:sub(TweakPosS, Dv),
@@ -928,6 +973,18 @@ vertex_pos(V, Vtab, OrigVtab) ->
       Pos -> Pos
     end.
 
+magnet_tweak(#mag{orig=Orig,vs=Vs}=Mag, Pos) ->
+    Vec = e3d_vec:sub(Pos, Orig),
+    Vtab = foldl(fun({V,P0,Plane,_,1.0}, A) ->
+               P1 = e3d_vec:add(P0, Vec),
+               P = mirror_constrain(Plane, P1),
+               [{V,P}|A];
+            ({V,P0,Plane,_,Inf}, A) ->
+               P1 = e3d_vec:add_prod(P0, Vec, Inf),
+               P = mirror_constrain(Plane, P1),
+               [{V,P}|A]
+         end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
 
 %% Magnet
 %% Setup magnet in the middle of a tweak op
@@ -994,39 +1051,6 @@ minus_locked_vs(MagVs, #we{pst=Pst}) ->
 remove_masked([V|LockedVs],MagVs) ->
     remove_masked(LockedVs,lists:keydelete(V,1,MagVs));
 remove_masked([],MagVs) -> MagVs.
-
-magnet_tweak(#mag{orig=Orig,vs=Vs}=Mag, Pos) ->
-    Vec = e3d_vec:sub(Pos, Orig),
-    Vtab = foldl(fun({V,P0,Plane,_,1.0}, A) ->
-               P1 = e3d_vec:add(P0, Vec),
-               P = mirror_constrain(Plane, P1),
-               [{V,P}|A];
-            ({V,P0,Plane,_,Inf}, A) ->
-               P1 = e3d_vec:add_prod(P0, Vec, Inf),
-               P = mirror_constrain(Plane, P1),
-               [{V,P}|A]
-         end, [], Vs),
-    {Vtab,Mag#mag{vtab=Vtab}}.
-
-relax_magnet_tweak_fn(#mag{vs=Vs}=Mag, _,We,Weight) ->
-    Vtab = foldl(fun({V,P0,Plane,_,1.0}, A) ->
-               P1=relax_vec_fn(V,We,P0,Weight),
-               P = mirror_constrain(Plane, P1),
-               [{V,P}|A];
-            ({V,P0,Plane,_,Inf}, A) ->
-               P1=relax_vec_fn(V,We,P0,Weight*Inf),
-               P = mirror_constrain(Plane, P1),
-               [{V,P}|A]
-         end, [], Vs),
-    {Vtab,Mag#mag{vtab=Vtab}}.
-
-magnet_tweak_slide_fn(#mag{vs=Vs}=Mag, We,Orig,TweakPos) ->
-    Vtab = foldl(fun({V,P0,Plane,_,Inf}, A) ->
-             P1=slide_vec_w(V,P0,Orig,TweakPos,We,Inf,Vs),
-             P = mirror_constrain(Plane, P1),
-             [{V,P}|A]
-         end, [], Vs),
-    {Vtab,Mag#mag{vtab=Vtab}}.
 
 magnet_type_calc(dome, D, R) when is_float(R) ->
     math:sin((R-D)/R*math:pi()/2);
@@ -1132,7 +1156,7 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
           tweak_magnet_help(),
           setup_magnet(T),
           T;
-      {Mode,1} when Mode =:= move; Mode =:= slide;
+      {Mode,1} when Mode =:= move; Mode =:= slide; Mode =:= scale;
           Mode =:= slide_collapse; Mode =:= relax ->
           set_tweak_pref(Mode, 1, {false, false, false}),
           {_,Prefs} = wings_pref:get_value(tweak_prefs),
@@ -1200,16 +1224,16 @@ update_drag(#dlo{src_sel={Mode,Els},src_we=#we{id=Id},drag=#drag{mm=MM}}=D0,
 update_drag(D,#tweak{st=St}) -> {D,St}.
 
 %%%% XYZ Tweak Constraints
-constraints(move) ->
+constraints(Mode) -> %% Mode =:= move; Mode =:= scale
     FKeys = fkey_combo(), % held xyz constraints
     TKeys = wings_pref:get_value(tweak_xyz), % Toggled xyz constraints
     case add_constraints(FKeys,TKeys) of
-      [true,false,false] -> xmove;
-      [false,true,false] -> ymove;
-      [false,false,true] -> zmove;
-      [true,true,false] -> xymove;
-      [false,true,true] -> yzmove;
-      [true,false,true] -> zxmove;
+      [true,false,false] -> list_to_atom("x" ++ atom_to_list(Mode));
+      [false,true,false] -> list_to_atom("y" ++ atom_to_list(Mode));
+      [false,false,true] -> list_to_atom("z" ++ atom_to_list(Mode));
+      [true,true,false]  -> list_to_atom("xy" ++ atom_to_list(Mode));
+      [false,true,true]  -> list_to_atom("yz" ++ atom_to_list(Mode));
+      [true,false,true]  -> list_to_atom("zx" ++ atom_to_list(Mode));
       _otherwise -> no_xyz
     end.
 
@@ -1227,22 +1251,22 @@ add_constraints([true|Fkeys],[T|Tkeys]) ->
     [not T|add_constraints(Fkeys,Tkeys)];
 add_constraints([],[]) -> [].
 
-other_constraint_dir(move) ->
+other_constraint_dir(Mode) ->
     FKeys = dir_check(),
     case FKeys of
       {false,false,false} ->
           case wings_pref:get_value(tweak_axis) of
-            screen -> move_screen;
-            normal -> move_normal;
-            planar_normal -> move_planar;
-            default -> move_default_axis;
-            planar_default -> move_default_planar
+            screen -> list_to_atom(atom_to_list(Mode) ++ "_screen");
+            normal -> list_to_atom(atom_to_list(Mode) ++ "_normal");
+            planar_normal -> list_to_atom(atom_to_list(Mode) ++ "_planar");
+            default -> list_to_atom(atom_to_list(Mode) ++ "_default_axis");
+            planar_default -> list_to_atom(atom_to_list(Mode) ++ "_default_planar")
           end;
-      {true,false,false} -> move_normal;
-      {false,true,false} -> move_planar;
-      {false,false,true} -> move_default_axis;
-      {false,true,true} -> move_default_planar;
-      _other_wise -> move_screen
+      {true,false,false} -> list_to_atom(atom_to_list(Mode) ++ "_normal");
+      {false,true,false} -> list_to_atom(atom_to_list(Mode) ++ "_planar");
+      {false,false,true} -> list_to_atom(atom_to_list(Mode) ++ "_default_axis");
+      {false,true,true} ->  list_to_atom(atom_to_list(Mode) ++ "_default_planar");
+      _other_wise ->        list_to_atom(atom_to_list(Mode) ++ "_screen")
     end.
 
 dir_check() ->
@@ -1304,6 +1328,7 @@ menu() ->
                        ?__(7,"Tweak is currently enabled; click to exit Tweak mode.")}
     end,
     MKey = keys_combo(move),
+    ScKey = keys_combo(scale),
     RKey = keys_combo(relax),
     SlKey = keys_combo(slide),
     SlColKey = keys_combo(slide_collapse),
@@ -1316,6 +1341,9 @@ menu() ->
        {mode(move), tweak_menu_fun(move),
         wings_msg:join([?__(8,"Drag elements relative to screen."),
         [CurB, MKey], Set, Swap, Del]), crossmark(MKey)},
+       {mode(scale), tweak_menu_fun(scale),
+        wings_msg:join([?__(35,"Scale elements relative to screen."),
+        [CurB, ScKey], Set, Swap, Del]), crossmark(ScKey)},
        {mode(relax),tweak_menu_fun(relax),
         wings_msg:join([?__(10,"Relax geometry."),
         [CurB, RKey], Set, Swap, Del]), crossmark(RKey)},
@@ -1338,7 +1366,8 @@ mode(move) -> ?__(1,"Move");
 mode(relax) -> ?__(3,"Relax");
 mode(slide) -> ?__(4,"Slide");
 mode(slide_collapse) -> ?__(5,"Slide Collapse");
-mode(select) -> ?__(7,"Paint Select").
+mode(select) -> ?__(6,"Paint Select");
+mode(scale) -> ?__(7,"Scale").
 
 tweak_menu_fun(Mode) ->
     fun
@@ -1507,7 +1536,7 @@ command({Mode,B}, St) when B =< 3->
     set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
     wings_wm:send(tweak_palette,update_palette),
     St;
-command(Mode, St) when Mode =:= move; Mode =:= select;
+command(Mode, St) when Mode =:= move; Mode =:= select; Mode =:= scale;
   Mode =:= slide; Mode =:= slide_collapse; Mode =:= relax ->
     set_tweak_pref(Mode, 1, {false, false, false}),
     wings_wm:send(tweak_palette,update_palette),
@@ -1956,7 +1985,7 @@ update_scroller(Knob,Lines) ->
 %%
 
 %% XYZ Constraints info line
-mode_message_1(Mode) when Mode =:= move ->
+mode_message_1(Mode) when Mode =:= move; Mode =:= scale ->
     Help1 = ?__(1,"Hold to Constrain XYZ"),
     Help2 = ?__(2,"Bold Fkeys are Locked (see Tweak menu)."),
     Help3 = ?__(3,"Held Fkeys cancel out Locked axes."),
