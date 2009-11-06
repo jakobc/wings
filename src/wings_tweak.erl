@@ -1102,11 +1102,13 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
       {axis_constraint, panel} -> T0;
       {axis_constraint, Axis} ->
           set_axis_lock(Axis),
+          wings_wm:send(tweak_axis_palette, update_palette),
           T0;
       {tweak_magnet, toggle_magnet} ->
           magnet_toggle(),
           {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
           T = T0#tweak{magnet=Mag, mag_type=MagType},
+          wings_wm:send(tweak_mag_palette, update_palette),
           tweak_magnet_help(),
           setup_magnet(T),
           T;
@@ -1118,6 +1120,7 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
           NewMag = cycle_magnet(),
           set_magnet_type(NewMag),
           T = T0#tweak{mag_type=NewMag},
+          wings_wm:send(tweak_mag_palette, update_palette),
           tweak_magnet_help(),
           setup_magnet(T),
           T;
@@ -1125,18 +1128,19 @@ is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
           set_magnet_type(MagType),
           {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
           T = T0#tweak{magnet=Mag, mag_type=MagType},
+          wings_wm:send(tweak_mag_palette, update_palette),
           tweak_magnet_help(),
           setup_magnet(T),
           T;
       {Mode,1} when Mode =:= move; Mode =:= slide;
-        Mode =:= slide_collapse; Mode =:= relax ->
-        set_tweak_pref(Mode, 1, {false, false, false}),
-        {_,Prefs} = wings_pref:get_value(tweak_prefs),
-        Palette = orddict:fetch(Cam,Prefs),
-        wings_wm:send(tweak_palette, {current_state, St}),
-        is_tweak_combo(T0#tweak{palette=Palette});
+          Mode =:= slide_collapse; Mode =:= relax ->
+          set_tweak_pref(Mode, 1, {false, false, false}),
+          {_,Prefs} = wings_pref:get_value(tweak_prefs),
+          Palette = orddict:fetch(Cam,Prefs),
+          wings_wm:send(tweak_palette, update_palette),
+          is_tweak_combo(T0#tweak{palette=Palette});
       _ ->
-        T0
+          T0
     end;
 
 is_tweak_hotkey({view,Cmd}, #tweak{st=St0}=T) when Cmd =/= quick_preview ->
@@ -1155,7 +1159,8 @@ is_tweak_combo(#tweak{st=#st{selmode=body}}=T) ->
     case wings_pref:get_value(tweak_sb_clears_constraints) of
       true ->
         wings_pref:set_value(tweak_xyz,[false,false,false]),
-        wings_pref:set_value(tweak_axis,screen);
+        wings_pref:set_value(tweak_axis,screen),
+        wings_wm:send(tweak_axis_palette, update_palette);
       false -> ok
     end,
     T;
@@ -1163,7 +1168,8 @@ is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
     case wings_pref:get_value(tweak_sb_clears_constraints) of
       true ->
         wings_pref:set_value(tweak_xyz,[false,false,false]),
-        wings_pref:set_value(tweak_axis,screen);
+        wings_pref:set_value(tweak_axis,screen),
+        wings_wm:send(tweak_axis_palette, update_palette);
       false -> ok
     end,
     {B,X,Y} = wings_io:get_mouse_state(),
@@ -1461,9 +1467,11 @@ command(toggle_tweak, St) ->
       {active,Modes} -> {inactive, Modes}
     end,
     wings_pref:set_value(tweak_prefs, NewPrefs),
+    wings_wm:send(tweak_palette, update_palette),
     St;
 command({tweak_magnet, toggle_magnet}, St) ->
     magnet_toggle(),
+    wings_wm:send(tweak_mag_palette, update_palette),
     St;
 command({tweak_magnet, reset_radius}, St) ->
     Pref = wings_pref:get_value(tweak_magnet),
@@ -1472,11 +1480,13 @@ command({tweak_magnet, reset_radius}, St) ->
 command({tweak_magnet, cycle_magnet}, St) ->
     NewMag = cycle_magnet(),
     set_magnet_type(NewMag),
+    wings_wm:send(tweak_mag_palette, update_palette),
     St;
 command({tweak_magnet, mag_adjust}, St) ->
     St;
 command({tweak_magnet, MagType}, St) ->
     set_magnet_type(MagType),
+    wings_wm:send(tweak_mag_palette,update_palette),
     St;
 command(show_help, St) ->
     help_window(),
@@ -1487,6 +1497,7 @@ command({axis_constraint, panel}, St) ->
     constraints_panel(St);
 command({axis_constraint, Axis}, St) ->
     set_axis_lock(Axis),
+    wings_wm:send(tweak_axis_palette,update_palette),
     St;
 command({Mode,B}, St) when B =< 3->
     Mod = sdl_keyboard:getModState(),
@@ -1494,12 +1505,12 @@ command({Mode,B}, St) when B =< 3->
     Shift = Mod band ?SHIFT_BITS =/= 0,
     Alt = Mod band ?ALT_BITS =/= 0,
     set_tweak_pref(Mode, B, {Ctrl, Shift, Alt}),
-    wings_wm:send(tweak_palette,{current_state,St}),
+    wings_wm:send(tweak_palette,update_palette),
     St;
 command(Mode, St) when Mode =:= move; Mode =:= select;
   Mode =:= slide; Mode =:= slide_collapse; Mode =:= relax ->
     set_tweak_pref(Mode, 1, {false, false, false}),
-    wings_wm:send(tweak_palette,{current_state,St}),
+    wings_wm:send(tweak_palette,update_palette),
     St;
 command(_,_) -> next.
 
@@ -1629,6 +1640,7 @@ constraints_panel(St) ->
 
 set_constraint(Res, St) ->
     wings_pref:set_value(tweak_xyz,Res),
+    wings_wm:send(tweak_axis_palette, update_palette),
     St.
 
 set_default_tweak_prefs(Cam) ->
@@ -2108,7 +2120,7 @@ event(redraw, #tw{w=W,h=H}=Tw) ->
     wings_io:border(0, 0, W-1, H-1, wings_pref:get_value(menu_color)),
     draw_tweak_palette(Tw),
     keep;
-event({current_state,_}, Tw0) ->
+event(update_palette, Tw0) ->
     Tw = update_tweak_palette(Tw0),
     wings_wm:dirty(),
     get_event(Tw);
