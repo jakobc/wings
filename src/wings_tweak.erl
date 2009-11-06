@@ -149,14 +149,14 @@ magnet_adjust(#tweak{st=St0}=T0) ->
     {GX,GY} = wings_wm:local2global(X, Y),
     case wings_pick:do_pick(X,Y,St0) of
       {add, {Id,Elem,_}=What, St} ->
-	  IdElem = {Id,gb_sets:singleton(Elem)},
+      IdElem = {Id,gb_sets:singleton(Elem)},
           wings_wm:grab_focus(),
           wings_io:grab(),
           begin_magnet_adjustment(What, St),
           T = T0#tweak{id=IdElem,ox=GX,oy=GY,cx=0,cy=0},
           {seq,push,update_magnet_handler(T)};
       {delete, {Id,Elem,_}=What, _} ->
-	  IdElem = {Id,gb_sets:singleton(Elem)},
+      IdElem = {Id,gb_sets:singleton(Elem)},
           wings_wm:grab_focus(),
           wings_io:grab(),
           begin_magnet_adjustment(What, St0),
@@ -487,9 +487,9 @@ begin_magnet_adjustment_fun(#dlo{src_sel={Mode,Els},src_we=We}=D, SelElem) ->
     Vs0 = sel_to_vs(Mode, gb_sets:to_list(Els), We),
     Center = wings_vertex:center(Vs0, We),
     MM = case {We,SelElem} of
-	     {#we{id=Id},{Id,_,MM0}} -> MM0;
-	     {_,_} -> original
-	 end,
+         {#we{id=Id},{Id,_,MM0}} -> MM0;
+         {_,_} -> original
+     end,
     D#dlo{drag=#drag{pos=Center,mm=MM}};
 begin_magnet_adjustment_fun(D, _) -> D.
 
@@ -531,9 +531,9 @@ begin_drag_fun(#dlo{src_sel={Mode,Els},src_we=We}=D0, SelElem, St, T) ->
     {Vs,Magnet} = begin_magnet(T, Vs0, Center, We),
     D = wings_draw:split(D0, Vs, St),
     MM = case {We,SelElem} of
-	     {#we{id=Id},{Id,_,MM0}} -> MM0;
-	     {_,_} -> original
-	 end,
+         {#we{id=Id},{Id,_,MM0}} -> MM0;
+         {_,_} -> original
+     end,
     D#dlo{drag=#drag{vs=Vs0,pos0=Center,pos=Center,mag=Magnet,mm=MM}};
 begin_drag_fun(D, _, _, _) -> D.
 
@@ -1075,8 +1075,8 @@ mirror_info(#we{mirror=Face}=We) ->
 
 mirror_matrix(V, {MirrorVs,Flatten}) ->
     case member(V, MirrorVs) of
-	false -> identity;
-	true -> Flatten
+    false -> identity;
+    true -> Flatten
     end.
 
 mirror_constrain(Matrix, Pos) -> e3d_mat:mul_point(Matrix, Pos).
@@ -2117,7 +2117,10 @@ get_event(Tw) ->
 %% Palette Events
 event(redraw, #tw{w=W,h=H}=Tw) ->
     wings_io:ortho_setup(),
-    wings_io:border(0, 0, W-1, H-1, wings_pref:get_value(menu_color)),
+    wings_io:blend(wings_pref:get_value(menu_color),
+           fun(Color) ->
+               wings_io:border(0, 0, W-1, H-1, Color)
+           end),
     draw_tweak_palette(Tw),
     keep;
 event(update_palette, Tw0) ->
@@ -2130,14 +2133,6 @@ event(#mousemotion{x=X,y=Y}, Tw) ->
     mousemotion(X, Y, Tw);
 event(#mousebutton{state=?SDL_RELEASED},#tw{current=[]}) ->
     keep;
-%event(#mousebutton{button=1,state=?SDL_RELEASED}, #tw{current={sub,SubMenu},st=St}=Tw0) ->
-%    case SubMenu of
-%      {tweak_magnet,_} -> mag_window(St);
-%      {axis_constraint,_} -> axis_window(St)
-%    end,
-%    Tw = update_tweak_palette(Tw0),
-%    wings_wm:dirty(),
-%    get_event(Tw);
 event(#mousebutton{button=1,state=?SDL_RELEASED}, #tw{current={cmd,Cmd},st=St}=Tw0) ->
     St1 = command(Cmd,St),
     Tw = update_tweak_palette(Tw0),
@@ -2243,22 +2238,6 @@ draw_tweak_menu_items([{Name,_,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
-
-%draw_tweak_menu_items([{Name,Cmd}|Menu], Y, #tw{lh=Lh, w=W, current={_,Cmd}}=Tw) ->
-%    Colour = wings_pref:get_value(menu_hilite),
-%    {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
-%    wings_io:set_color(wings_pref:get_value(menu_hilite)),
-%    wings_io:gradient_rect(X1-1, Y1, X2-X1+1, Y2-Y1, Colour),
-%    wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
-%    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
-%    Ly = Y + Lh,
-%    wings_wm:message(Name ++ ?__(1," submenu")),
-%    draw_tweak_menu_items(Menu, Ly, Tw);
-%draw_tweak_menu_items([{Name,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
-%    wings_io:set_color(wings_pref:get_value(menu_text)),
-%    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
-%    Ly = Y + Lh,
-%    draw_tweak_menu_items(Menu, Ly, Tw);
 
 draw_tweak_menu_items([{Name,Cmd,Help,_}|Menu], Y, #tw{lh=Lh, w=W, current={_,{_,Cmd}}, mode={_,Cmd,_}}=Tw) ->
     {R,G,B} = wings_pref:get_value(menu_hilite),
