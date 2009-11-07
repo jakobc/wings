@@ -44,6 +44,8 @@
     {vs,
      pos0,				%Original position.
      pos,				%Current position.
+     pst=none,			%Any data that a specific tweak tool needs stored
+     					% temporarily
      mag,				%mag record
      mm}).				%original|mirror
 
@@ -179,7 +181,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=St0}=T0) ->
         wings_wm:grab_focus(),
         wings_io:grab(),
         begin_drag(What, St, T0),
-        do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
+        do_tweak_0(0.0, 0.0, 0.0, 0.0, {move,screen}),
         T = T0#tweak{id={add,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       {delete, {Id,Elem,_}=What, _} ->
@@ -187,7 +189,7 @@ handle_tweak_event_1(#tweak{ox=X, oy=Y, st=St0}=T0) ->
         wings_wm:grab_focus(),
         wings_io:grab(),
         begin_drag(What, St0, T0),
-        do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
+        do_tweak_0(0.0, 0.0, 0.0, 0.0, {move,screen}),
         T = T0#tweak{id={del,IdElem},ox=GX,oy=GY,cx=0,cy=0},
         {seq,push,update_tweak_handler(T)};
       none -> next
@@ -224,7 +226,7 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
       Other -> Other
     end,
     wings_io:warp(OX,OY),
-    do_tweak(DX,DY,DxOrg,DyOrg,Mode),
+    do_tweak_0(DX,DY,DxOrg,DyOrg,Mode),
     T = T0#tweak{cx=DxOrg,cy=DyOrg},
     update_tweak_handler(T);
 
@@ -237,7 +239,7 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
     DxOrg = DX+CX, %total X
     DyOrg = DY+CY, %total Y
     wings_io:warp(OX,OY),
-    do_tweak(DX,DY,DxOrg,DyOrg,Mode),
+    do_tweak_0(DX,DY,DxOrg,DyOrg,Mode),
     T = T0#tweak{cx=DxOrg,cy=DyOrg},
     update_tweak_handler(T);
 
@@ -303,7 +305,7 @@ tweak_drag_mag_adjust(#tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
     DxOrg = DX+CX, %total X
     DyOrg = DY+CY, %total Y
     wings_io:warp(OX,OY),
-    do_tweak(DX,DY,DxOrg,DyOrg,Mode),
+    do_tweak_0(DX,DY,DxOrg,DyOrg,Mode),
     T = T0#tweak{cx=DxOrg,cy=DyOrg},
     update_in_drag_radius_handler(T).
 
@@ -637,41 +639,43 @@ end_drag(_, #dlo{src_sel={_,_},src_we=#we{id=Id}}=D0, #st{shapes=Shs0}=St0) ->
 end_drag(_, D, St) -> {D, St}.
 
 %%%% Do Tweak
-do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
+do_tweak_0(DX, DY, DxOrg, DyOrg, Mode) ->
     wings_dl:map(fun
         (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
             case Mode of
-              M when M =:= xmove; M =:= ymove; M =:= zmove;
-                     M =:= xymove; M =:= yzmove; M =:= zxmove ->
+              {M,_} when M =:= {move,x}; M =:= {move,y}; M =:= {move,z};
+                     M =:= {move,xy}; M =:= {move,yz}; M =:= {move,zx} ->
                 do_tweak(D, DX, DY, DxOrg, DyOrg, Mode);
               _ ->
-                do_tweak(D, DX, DY, DxOrg, DyOrg, move_screen)
+                do_tweak(D, DX, DY, DxOrg, DyOrg, {move,screen})
             end;
         (D, _) ->
              do_tweak(D, DX, DY, DxOrg, DyOrg, Mode)
          end, []).
 
 do_tweak(#dlo{drag={matrix,Pos0,Matrix0,_},src_we=#we{id=Id}}=D0,
-     DX,DY,_,_,Mode) ->
+          DX,DY,_,_,Mode) ->
     Matrices = wings_u:get_matrices(Id, original),
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
     {Tx,Ty,Tz} = TweakPos,
     {Px,Py,Pz} = Pos0,
     Pos = case Mode of
-        xmove -> {Tx,Py,Pz};
-        ymove -> {Px,Ty,Pz};
-        zmove -> {Px,Py,Tz};
-        xymove -> {Tx,Ty,Pz};
-        yzmove -> {Px,Ty,Tz};
-        zxmove -> {Tx,Py,Tz};
+        {move, x} -> {Tx,Py,Pz};
+        {move, y} -> {Px,Ty,Pz};
+        {move, z} -> {Px,Py,Tz};
+        {move, xy} -> {Tx,Ty,Pz};
+        {move, yz} -> {Px,Ty,Tz};
+        {move, zx} -> {Tx,Py,Tz};
         _Other -> TweakPos
     end,
     Move = e3d_vec:sub(Pos, Pos0),
     Matrix = e3d_mat:mul(e3d_mat:translate(Move), Matrix0),
     D0#dlo{drag={matrix,Pos,Matrix,e3d_mat:expand(Matrix)}};
-do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
-          src_we=#we{id=Id,mirror=Mir}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
+
+do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst=PrimeVec0,
+          mag=Mag0,mm=MM}=Drag, src_we=#we{id=Id,mirror=Mir}}=D0,
+          DX, DY, _DxOrg, _DyOrg, {scale, Type}) ->
     Matrices = case Mir of
         none -> wings_u:get_matrices(Id, original);
         _ -> wings_u:get_matrices(Id, MM)
@@ -680,25 +684,79 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
     {Tx,Ty,Tz} = TweakPos,
     {Px,Py,Pz} = Pos0,
+    Pos = case Type of
+        x -> {Tx,Py,Pz};
+        y -> {Px,Ty,Pz};
+        z -> {Px,Py,Tz};
+        _ -> TweakPos
+    end,
+
+    PrimeVec = if 
+        PrimeVec0 =:= none ->
+          {_, XX, YY} = wings_io:get_mouse_state(),
+          {_, YY0} = wings_wm:win_size(wings_wm:this()),
+          {MSX,MSY} = wings_wm:global2local(XX,YY),
+          MS = screen_to_obj(Matrices,{float(MSX), float(YY0 - MSY), Zs}),
+          V1 = e3d_vec:norm_sub(MS,Orig), %% vector from where the user
+                                              %% starts drag to bbox sel center
+
+          V2 = e3d_vec:norm_sub(Orig,Pos), %% vector marking direction of scale
+          Dot = e3d_vec:dot(V1, V2),
+          %% Flip scale vec depending on the direction
+          %% the user is dragging according to the center of the selection 
+          case  Dot < 0.0 of
+            true -> e3d_vec:neg(V2);
+            false -> V2
+          end;
+        true -> PrimeVec0
+    end,
+    Pst = PrimeVec,
+    Dist = dist_along_vector(Orig, TweakPos, PrimeVec),
+    {Vtab,Mag} = tweak_scale(Dist, Orig, PrimeVec, Mag0),
+    D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,pst=Pst,mag=Mag}},
+    wings_draw:update_dynamic(D, Vtab);
+
+do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
+          src_we=#we{id=Id,mirror=Mir}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
+    Matrices = case Mir of
+        none -> wings_u:get_matrices(Id, original);
+        _ -> wings_u:get_matrices(Id, MM)
+    end,
+    {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
+    TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
+    {Tx,Ty,Tz} = TweakPos, 
+    {Px,Py,Pz} = Pos0,
     {Vtab,Mag} =
     case Mode of
-        xmove ->
+        {move,x} ->
             Pos = {Tx,Py,Pz},
             magnet_tweak(Mag0, Pos);
-        ymove ->
+        {move,y} ->
             Pos = {Px,Ty,Pz},
             magnet_tweak(Mag0, Pos);
-        zmove ->
+        {move,z} ->
             Pos = {Px,Py,Tz},
             magnet_tweak(Mag0, Pos);
-        xymove ->
+        {move,xy} ->
             Pos = {Tx,Ty,Pz},
             magnet_tweak(Mag0, Pos);
-        yzmove ->
+        {move,yz} ->
             Pos = {Px,Ty,Tz},
             magnet_tweak(Mag0, Pos);
-        zxmove ->
+        {move,zx} ->
             Pos = {Tx,Py,Tz},
+            magnet_tweak(Mag0, Pos);
+        {move,normal} ->
+            Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
+            magnet_tweak(Mag0, Pos);
+        {move,planar} ->
+            Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
+            magnet_tweak(Mag0, Pos);
+        {move,default} ->
+            Pos = tweak_default_axis(Pos0, TweakPos),
+            magnet_tweak(Mag0, Pos);
+        {move,default_planar} ->
+            Pos = tweak_default_tangent(Pos0, TweakPos),
             magnet_tweak(Mag0, Pos);
         relax ->
             Pos = TweakPos,
@@ -707,28 +765,13 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
                  true -> 1.0;
                  false -> Len
             end,
-            relax_magnet_tweak_fn(Mag0, Pos, We, Len1);
+            relax_magnet_tweak_fn(Mag0, We, Len1);
         slide ->
             Pos = TweakPos,
             magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
         slide_collapse ->
             Pos = TweakPos,
             magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
-        move_normal ->
-            Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
-            magnet_tweak(Mag0, Pos);
-        move_planar ->
-            Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
-            magnet_tweak(Mag0, Pos);
-        move_default_axis ->
-            Pos = tweak_default_axis(Pos0, TweakPos),
-            magnet_tweak(Mag0, Pos);
-        move_default_planar ->
-            Pos = tweak_default_tangent(Pos0, TweakPos),
-            magnet_tweak(Mag0, Pos);
-        scale_screen -> % uniform
-            Pos = tweak_scale(Pos0, TweakPos, Mag0, We),
-            magnet_tweak(Mag0, Pos);
         _ 	->
             Pos = TweakPos,
             magnet_tweak(Mag0, Pos)
@@ -738,13 +781,24 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
 do_tweak(D, _, _, _, _, _) -> D.
 
 %%%% Scale
-tweak_scale(Pos, TweakPos, #mag{vs=Vs}=Mag, We) ->
-    Vec = e3d_vec:sub(Pos, TweakPos),
-    Center = wings_vertex:center(Vs, We),
-    
+tweak_scale(Dist, TPos, PVec, #mag{vs=Vs}=Mag) ->
+    Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
+                   D = dist_along_vector(TPos, Pos0, PVec),
+                   Pos1 = e3d_vec:add_prod(Pos0, PVec, Inf*D*(Dist/2)),
+                   Pos = mirror_constrain(Plane, Pos1),
+                   [{V,Pos}|A]
+           end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
+
+dist_along_vector(PosA,PosB,Vector) ->
+    %% Return Distance between PosA and PosB along Vector
+    {Xa,Ya,Za} = PosA,
+    {Xb,Yb,Zb} = PosB,
+    {Vx,Vy,Vz} = e3d_vec:norm(Vector),
+    Vx*(Xa-Xb)+Vy*(Ya-Yb)+Vz*(Za-Zb).
 
 %%%% Relax
-relax_magnet_tweak_fn(#mag{vs=Vs}=Mag, _,We,Weight) ->
+relax_magnet_tweak_fn(#mag{vs=Vs}=Mag,We,Weight) ->
     Vtab = foldl(fun({V,P0,Plane,_,1.0}, A) ->
                P1=relax_vec_fn(V,We,P0,Weight),
                P = mirror_constrain(Plane, P1),
@@ -992,7 +1046,7 @@ setup_magnet(#tweak{mode=Mode, cx=X, cy=Y}=T) ->
     wings_dl:map(fun(D, _) ->
              setup_magnet_fun(D, T)
          end, []),
-    do_tweak(0.0, 0.0, X, Y,Mode),
+    do_tweak_0(0.0, 0.0, X, Y,Mode),
     T.
 
 setup_magnet_fun(#dlo{src_sel={_,_},drag=#drag{vs=Vs0,pos0=Center}=Drag}=Dl0,
@@ -1121,7 +1175,7 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 %%%
 %%%% Hotkey and Combo Checking
 %%%
-is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet, st=St}=T0) ->
+is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet}=T0) ->
     case Cmd of
       {axis_constraint, panel} -> T0;
       {axis_constraint, Axis} ->
@@ -1206,7 +1260,7 @@ is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
             St = wings_dl:map(fun (D, _) ->
                       update_drag(D, T)  % used to find mid tweak model data
                       end, St0),
-            do_tweak(0.0, 0.0, 0.0, 0.0, move_screen),
+            do_tweak_0(0.0, 0.0, 0.0, 0.0, {move,screen}),
             T#tweak{mode=NewMode,st=St,ox=X,oy=Y,cx=0,cy=0};
         _ -> T
     end.
@@ -1228,12 +1282,12 @@ constraints(Mode) -> %% Mode =:= move; Mode =:= scale
     FKeys = fkey_combo(), % held xyz constraints
     TKeys = wings_pref:get_value(tweak_xyz), % Toggled xyz constraints
     case add_constraints(FKeys,TKeys) of
-      [true,false,false] -> list_to_atom("x" ++ atom_to_list(Mode));
-      [false,true,false] -> list_to_atom("y" ++ atom_to_list(Mode));
-      [false,false,true] -> list_to_atom("z" ++ atom_to_list(Mode));
-      [true,true,false]  -> list_to_atom("xy" ++ atom_to_list(Mode));
-      [false,true,true]  -> list_to_atom("yz" ++ atom_to_list(Mode));
-      [true,false,true]  -> list_to_atom("zx" ++ atom_to_list(Mode));
+      [true,false,false] -> {Mode, x};
+      [false,true,false] -> {Mode, y};
+      [false,false,true] -> {Mode, z};
+      [true,true,false]  -> {Mode, xy};
+      [false,true,true]  -> {Mode, yz};
+      [true,false,true]  -> {Mode, zx};
       _otherwise -> no_xyz
     end.
 
@@ -1251,22 +1305,15 @@ add_constraints([true|Fkeys],[T|Tkeys]) ->
     [not T|add_constraints(Fkeys,Tkeys)];
 add_constraints([],[]) -> [].
 
-other_constraint_dir(Mode) ->
+other_constraint_dir(Mode) -> %% Mode is 'move' or 'scale'
     FKeys = dir_check(),
     case FKeys of
-      {false,false,false} ->
-          case wings_pref:get_value(tweak_axis) of
-            screen -> list_to_atom(atom_to_list(Mode) ++ "_screen");
-            normal -> list_to_atom(atom_to_list(Mode) ++ "_normal");
-            planar_normal -> list_to_atom(atom_to_list(Mode) ++ "_planar");
-            default -> list_to_atom(atom_to_list(Mode) ++ "_default_axis");
-            planar_default -> list_to_atom(atom_to_list(Mode) ++ "_default_planar")
-          end;
-      {true,false,false} -> list_to_atom(atom_to_list(Mode) ++ "_normal");
-      {false,true,false} -> list_to_atom(atom_to_list(Mode) ++ "_planar");
-      {false,false,true} -> list_to_atom(atom_to_list(Mode) ++ "_default_axis");
-      {false,true,true} ->  list_to_atom(atom_to_list(Mode) ++ "_default_planar");
-      _other_wise ->        list_to_atom(atom_to_list(Mode) ++ "_screen")
+      {false,false,false} -> {Mode, wings_pref:get_value(tweak_axis)};
+      {true,false,false} ->  {Mode, normal};
+      {false,true,false} ->  {Mode, planar};
+      {false,false,true} ->  {Mode, default};
+      {false,true,true} ->   {Mode, default_planar};
+      _other_wise ->         {Mode, screen}
     end.
 
 dir_check() ->
@@ -1403,11 +1450,11 @@ constraints_menu() ->
     DP = ?__(17,"Default Plane is Locked"),
 
     {Normal,NPlane,Default,DPlane} = case wings_pref:get_value(tweak_axis) of
-      screen -> {LN,LP,DA,LD};
       normal -> {NL,LP,DA,LD};
-      planar_normal -> {LN,NP,DA,LD};
+      planar -> {LN,NP,DA,LD};
       default -> {LN,LP,DL,LD};
-      planar_default -> {LN,LP,DA,DP}
+      planar_default -> {LN,LP,DA,DP};
+      _ -> {LN,LP,DA,LD} % screen
     end,
 
     Nhelp1 = ?__(18,"Lock Normal"),
@@ -1420,7 +1467,7 @@ constraints_menu() ->
      {?__(8,"XYZ Panel"),panel,?__(9,"Toggle xyz constraints")},
     separator,
      {Normal,normal,wings_msg:join([Help,Nhelp1])},
-     {NPlane,planar_normal,wings_msg:join([Help,Nhelp2])},
+     {NPlane,planar,wings_msg:join([Help,Nhelp2])},
      {Default,default,wings_msg:join([Help,Dhelp1])},
      {DPlane,planar_default,wings_msg:join([Help,Dhelp2])},
     separator,
