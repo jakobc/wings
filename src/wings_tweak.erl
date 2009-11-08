@@ -713,36 +713,36 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst =:= none
     
     %% Cursor Position according to the model coordinates
     CursorPos = screen_to_obj(Matrices,{float(MSX), float(YY0 - MSY), Zs}),
+    %% vector from where the user starts drag to bbox sel center
+    V1 = e3d_vec:norm_sub(CursorPos,Orig),
+    
+    %% scale axis
+    V2 = e3d_vec:norm_sub(Orig,Pos), 
+    
+    %% Flip scale vec depending on the direction
+    %% the user is dragging. To or From the selection center.
+    Dot = e3d_vec:dot(V1, V2),
+    PVec = case  Dot < 0.0 of
+      true -> e3d_vec:neg(V2);
+      false -> V2
+    end,
 
     PrimeVec = if 
-        Dir =:= user ->
-
-          %% vector from where the user starts drag to bbox sel center
-          V1 = e3d_vec:norm_sub(CursorPos,Orig),
-
-          %% scale axis
-          V2 = e3d_vec:norm_sub(Orig,Pos), 
-
-          %% Flip scale vec depending on the direction
-          %% the user is dragging. To or From the selection center.
-          Dot = e3d_vec:dot(V1, V2),
-          case  Dot < 0.0 of
-            true -> e3d_vec:neg(V2);
-            false -> V2
-          end;
+        Dir =:= user -> PVec;
         true -> Pos
     end,
+
     %% Check for active Point ops
-    VecData = case wings_pref:get_value(tweak_point) of
-       none -> {PrimeVec,Orig};
-       from_cursor -> {PrimeVec, CursorPos}
+    VecData = {_, VD} = case wings_pref:get_value(tweak_point) of
+       none -> {PVec, {PrimeVec, Orig}};
+       from_cursor -> {e3d_vec:neg(PVec), {PrimeVec, CursorPos}}
     end,
 
-    Dist = dist_along_vector(Orig, TweakPos, PrimeVec)/2,
+    Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
 
     {Vtab,Mag} = case Dir of
-        radial -> tweak_scale_radial(Dist, VecData, Mag0);
-        _ -> tweak_scale(Dist, VecData, Mag0)
+        radial -> tweak_scale_radial(Dist, VD, Mag0);
+        _ -> tweak_scale(Dist, VD, Mag0)
     end,
 
     Pst = {Type,Dir,VecData},
@@ -758,11 +758,11 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst={Type,Dir,PrimeVec},
     end,
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
-    {PVec,_} = PrimeVec,
+    {PVec,VD} = PrimeVec,
     Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
     {Vtab,Mag} = case Dir of
-        radial -> tweak_scale_radial(Dist, PrimeVec, Mag0);
-        _ -> tweak_scale(Dist, PrimeVec, Mag0)
+        radial -> tweak_scale_radial(Dist, VD, Mag0);
+        _ -> tweak_scale(Dist, VD, Mag0)
     end,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
