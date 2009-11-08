@@ -858,9 +858,8 @@ tweak_scale_radial(Dist, {Norm,Point}, #mag{vs=Vs}=Mag) ->
            end, [], Vs),
     {Vtab,Mag#mag{vtab=Vtab}}.
 
-tweak_scale_uniform(Dist, {PVec, Point}, #mag{vs=Vs}=Mag) ->
+tweak_scale_uniform(Dist, {_, Point}, #mag{vs=Vs}=Mag) ->
     Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
-                   D = dist_along_vector(Point, Pos0, PVec),
                    Vec = e3d_vec:sub(Point, Pos0),
                    Pos1 = e3d_vec:add_prod(Pos0, Vec, Inf*Dist),
                    Pos = mirror_constrain(Plane, Pos1),
@@ -2226,27 +2225,30 @@ window(St) ->
     end.
 
 window(Pos, St) ->
+    Title = tweak_palette,
     Cw = ?CHAR_WIDTH,
     Lh = ?LINE_HEIGHT,
     Menu = valid_menu_items(menu()),
     N = length(Menu),
-    W = max_width(Menu, 0),
+    W = max_width(Menu, 0, Title),
     Height = Lh * N + 4,
     Width = Cw * W + (Cw*2),
     Size = {Width, Height},
     Mode = tweak_tool(1, {false, false, false}),
     Tw = #tw{h=Height, w=Width, menu=Menu, n=N, current=[], lh=Lh, mode=Mode, st=St},
     Op = {seq,push,get_event(Tw)},
-    wings_wm:toplevel(tweak_palette, tweak_palette_title(), Pos, Size,
-              [closable], Op).
+    wings_wm:toplevel(Title, palette_title(Title), Pos, Size, [closable], Op).
 
-max_width([],L) -> L;
-max_width([separator|Tm], L) ->
-   max_width(Tm, L);
-max_width([MenuItem|Tm], L0) ->
+max_width([],L0, Palette) ->
+    PaletteTitle = palette_title(Palette),
+    L1 = length(PaletteTitle)+2,
+    if L1 > L0 -> L1; true -> L0 end;
+max_width([separator|Tm], L, Pt) ->
+   max_width(Tm, L, Pt);
+max_width([MenuItem|Tm], L0, Pt) ->
     L1 = length(element(1,MenuItem)),
     L2 = if L1 > L0 -> L1; true -> L0 end,
-    max_width(Tm, L2).
+    max_width(Tm, L2, Pt).
 
 tweak_tool(Button, Modifiers) ->
     {_, Modes} = wings_pref:get_value(tweak_prefs),
@@ -2262,9 +2264,13 @@ tweak_tool(Button, Modifiers) ->
           end,
     Mode.
 
-tweak_palette_title() ->
-    ?__(1,"Tweak").
-
+palette_title(tweak_palette) ->
+    ?__(1,"Tweak");
+palette_title(tweak_mag_palette) ->
+    ?__(2,"Tweak Magnet");
+palette_title(tweak_axis_palette) ->
+    ?__(3,"Tweak Axis");
+palette_title(_) -> [].
 get_event(Tw) ->
     {replace,fun(Ev) -> event(Ev, Tw) end}.
 %% Palette Events
@@ -2279,12 +2285,12 @@ event(redraw, #tw{w=W,h=H}=Tw) ->
 event(update_palette, Tw0) ->
     #tw{menu=Menu,lh=Lh}=Tw = update_tweak_palette(Tw0),
     Cw = ?CHAR_WIDTH,
+    Win = wings_wm:this(),
     N = length(Menu),
-    W = max_width(Menu, 0),
+    W = max_width(Menu, 0, Win),
     Height = Lh * N + 4,
     Width = Cw * W + (Cw*2),
     Size = {Width, Height},
-    Win = wings_wm:this(),
     wings_wm:resize(Win, Size),
     wings_wm:dirty(),
     get_event(Tw#tw{h=Height, w=Width, n=N});
@@ -2523,19 +2529,19 @@ mag_window(St) ->
     end.
 
 mag_window(Pos, St) ->
+    Title = tweak_mag_palette,
     Cw = ?CHAR_WIDTH,
     Lh = ?LINE_HEIGHT,
     Menu = valid_menu_items(tweak_magnet_menu()),
     N = length(Menu),
-    W = max_width(Menu, 0),
+    W = max_width(Menu, 0, Title),
     Height = Lh * N + 4,
     Width = Cw * W + (Cw*2),
     Size = {Width, Height},
     Magnet = wings_pref:get_value(tweak_magnet),
     Tw = #tw{h=Height, w=Width, menu=Menu, n=N, current=[], lh=Lh, mode=Magnet, st=St},
     Op = {seq,push,get_event(Tw)},
-    wings_wm:toplevel(tweak_mag_palette, ?__(1,"Tweak Magnet"), Pos, Size,
-              [closable], Op).
+    wings_wm:toplevel(Title, palette_title(Title), Pos, Size, [closable], Op).
 
 axis_window(St) ->
     case wings_wm:is_window(tweak_axis_palette) of
@@ -2549,15 +2555,15 @@ axis_window(St) ->
     end.
 
 axis_window(Pos, St) ->
+    Title = tweak_axis_palette,
     Cw = ?CHAR_WIDTH,
     Lh = ?LINE_HEIGHT,
     Menu = valid_menu_items(constraints_menu()),
     N = length(Menu),
-    W = max_width(Menu, 0),
+    W = max_width(Menu, 0, Title),
     Height = Lh * N + 4,
     Width = Cw * W + (Cw*2),
     Size = {Width, Height},
     Tw = #tw{h=Height, w=Width, menu=Menu, n=N, current=[], lh=Lh, mode=none, st=St},
     Op = {seq,push,get_event(Tw)},
-    wings_wm:toplevel(tweak_axis_palette, ?__(1,"Tweak Axis"), Pos, Size,
-              [closable], Op).
+    wings_wm:toplevel(Title, palette_title(Title), Pos, Size, [closable], Op).
