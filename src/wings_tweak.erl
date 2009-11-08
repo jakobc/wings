@@ -673,7 +673,7 @@ do_tweak(#dlo{drag={matrix,Pos0,Matrix0,_},src_we=#we{id=Id}}=D0,
     Matrix = e3d_mat:mul(e3d_mat:translate(Move), Matrix0),
     D0#dlo{drag={matrix,Pos,Matrix,e3d_mat:expand(Matrix)}};
 
-do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst=PrimeVec0,
+do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst == none
           mag=Mag0,mm=MM}=Drag, src_we=#we{id=Id,mirror=Mir}}=D0,
           DX, DY, _DxOrg, _DyOrg, {scale, Type}) ->
     Matrices = case Mir of
@@ -682,24 +682,32 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst=PrimeVec0,
     end,
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
-    {Tx,Ty,Tz} = TweakPos,
-    {Px,Py,Pz} = Pos0,
-    Pos = case Type of
-        x -> {Tx,Py,Pz};
-        y -> {Px,Ty,Pz};
-        z -> {Px,Py,Tz};
-        _ -> TweakPos
+
+    {Dir,Pos} = case Type of
+        x -> {dir,{1.0,0.0,0.0}};
+        y -> {dir,{0.0,1.0,0.0}};
+        z -> {dir,{0.0,0.0,1.0}};
+        xy -> {radial,{0.0,0.0,1.0}};
+        yz -> {radial,{1.0,0.0,0.0}};
+        zx -> {radial,{0.0,1.0,0.0}};
+        planar -> {radial, sel_normal_0(Vs,TweakPos,D0)};
+        normal -> {dir, sel_normal_0(Vs,TweakPos,D0)};
+        default ->
+            {_,Normal} = wings_pref:get_value(default_axis),
+            {dir,Normal};
+        planar_default ->
+            {_,Normal} = wings_pref:get_value(default_axis),
+            {radial,Normal};
+        _ -> {dir,TweakPos}
     end,
 
     PrimeVec = if 
-        PrimeVec0 =:= none ->
+        Dir =:= dir ->
           {_, XX, YY} = wings_io:get_mouse_state(),
           {_, YY0} = wings_wm:win_size(wings_wm:this()),
           {MSX,MSY} = wings_wm:global2local(XX,YY),
           MS = screen_to_obj(Matrices,{float(MSX), float(YY0 - MSY), Zs}),
-          V1 = e3d_vec:norm_sub(MS,Orig), %% vector from where the user
-                                              %% starts drag to bbox sel center
-
+          V1 = e3d_vec:norm_sub(MS,Orig), %% vector from where the user starts drag to bbox sel center
           V2 = e3d_vec:norm_sub(Orig,Pos), %% vector marking direction of scale
           Dot = e3d_vec:dot(V1, V2),
           %% Flip scale vec depending on the direction
@@ -708,12 +716,31 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst=PrimeVec0,
             true -> e3d_vec:neg(V2);
             false -> V2
           end;
-        true -> PrimeVec0
+        true -> Pos
     end,
-    Pst = PrimeVec,
-    Dist = dist_along_vector(Orig, TweakPos, PrimeVec),
-    {Vtab,Mag} = tweak_scale(Dist, Orig, PrimeVec, Mag0),
+    Pst = {Type,Dir,PrimeVec},
+    {Vtab,Mag} = case Dir of
+        dir -> tweak_scale(TweakPos, Orig, PrimeVec, Mag0);
+        radial -> tweak_scale_radial(TweakPos, Orig, PrimeVec, Mag0)
+    end,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,pst=Pst,mag=Mag}},
+    wings_draw:update_dynamic(D, Vtab);
+
+do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst={Type,Dir,PrimeVec},
+          mag=Mag0,mm=MM}=Drag, src_we=#we{id=Id,mirror=Mir}}=D0,
+          DX, DY, _DxOrg, _DyOrg, {scale, Type}) ->
+    Matrices = case Mir of
+        none -> wings_u:get_matrices(Id, original);
+        _ -> wings_u:get_matrices(Id, MM)
+    end,
+    {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
+    TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
+
+    {Vtab,Mag} = case Dir of
+        dir -> tweak_scale(TweakPos, Orig, PrimeVec, Mag0);
+        radial -> tweak_scale_radial(TweakPos, Orig, PrimeVec, Mag0)
+    end,
+    D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 
 do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
@@ -747,7 +774,8 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
             Pos = {Tx,Py,Tz},
             magnet_tweak(Mag0, Pos);
         {move,normal} ->
-            Pos = tweak_normal(Vs, Pos0, TweakPos, D0),
+            Normals = sel_normal(Vs,D0),
+            Pos = tweak_normal(Normals, Pos0, TweakPos),
             magnet_tweak(Mag0, Pos);
         {move,planar} ->
             Pos = tweak_tangent(Vs, Pos0, TweakPos, D0),
@@ -776,15 +804,29 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
             Pos = TweakPos,
             magnet_tweak(Mag0, Pos)
     end,
-    D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,mag=Mag}},
+    D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,pst=none,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 do_tweak(D, _, _, _, _, _) -> D.
 
 %%%% Scale
-tweak_scale(Dist, TPos, PVec, #mag{vs=Vs}=Mag) ->
+tweak_scale(TweakPos, Orig, PVec, #mag{vs=Vs}=Mag) ->
+    Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
     Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
-                   D = dist_along_vector(TPos, Pos0, PVec),
-                   Pos1 = e3d_vec:add_prod(Pos0, PVec, Inf*D*(Dist/2)),
+                   D = dist_along_vector(Orig, Pos0, PVec),
+                   Pos1 = e3d_vec:add_prod(Pos0, PVec, Inf*D*Dist),
+                   Pos = mirror_constrain(Plane, Pos1),
+                   [{V,Pos}|A]
+           end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
+
+tweak_scale_radial(TweakPos, Orig, Norm, #mag{vs=Vs}=Mag) ->
+    Dist = dist_along_vector(Orig, TweakPos, Norm)/2,
+    Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
+                   V1 = e3d_vec:norm_sub(Orig, Pos0),
+                   V2 = e3d_vec:cross(V1,Norm),
+                   Vec = e3d_vec:norm(e3d_vec:cross(V2,Norm)),
+                   D = dist_along_vector(Orig, Pos0, Vec),
+                   Pos1 = e3d_vec:add_prod(Pos0, Vec, Inf*D*Dist),
                    Pos = mirror_constrain(Plane, Pos1),
                    [{V,Pos}|A]
            end, [], Vs),
@@ -957,14 +999,28 @@ tweak_default_tangent(Pos0, TweakPos) ->
     end.
 
 %% Along Average Normal
-tweak_normal( _, Pos0, TweakPos, #dlo{src_we=#we{}=We,src_sel={face,Sel0}}) ->
+sel_normal_0(Vs, TweakPos, D) ->
+    case sel_normal(Vs,D) of
+      [[]] ->
+          TweakPos;
+      Normals ->
+          e3d_vec:norm(e3d_vec:add(Normals))
+    end.
+
+sel_normal( _, #dlo{src_we=#we{}=We,src_sel={face,Sel0}}) ->
     Faces = gb_sets:to_list(Sel0),
-    Normals = face_normals(Faces,We,[]),
+    face_normals(Faces,We,[]);
+sel_normal(Vs,D) ->
+    [vertex_normal(V, D) || V <- Vs].
+
+
+%% Return the point along the normal closest to TweakPos.
+tweak_normal(Normals, Pos0, TweakPos) ->
     case Normals of
-    [[]] -> TweakPos;
-    _Otherwise ->
+    [[]] ->
+        TweakPos;
+    Normals ->
         N = e3d_vec:norm(e3d_vec:add(Normals)),
-        %% Return the point along the normal closest to TweakPos.
         Dot = e3d_vec:dot(N, N),
         if
         Dot =:= 0.0 -> Pos0;
@@ -972,18 +1028,6 @@ tweak_normal( _, Pos0, TweakPos, #dlo{src_we=#we{}=We,src_sel={face,Sel0}}) ->
             T = e3d_vec:dot(N, e3d_vec:sub(TweakPos, Pos0)) / Dot,
             e3d_vec:add_prod(Pos0, N, T)
         end
-    end;
-
-tweak_normal(Vs, Pos0, TweakPos, D) ->
-    Normals = [vertex_normal(V, D) || V <- Vs],
-    N = e3d_vec:norm(e3d_vec:add(Normals)),
-    %% Return the point along the normal closest to TweakPos.
-    Dot = e3d_vec:dot(N, N),
-    if
-    Dot =:= 0.0 -> Pos0;
-    true ->
-        T = e3d_vec:dot(N, e3d_vec:sub(TweakPos, Pos0)) / Dot,
-        e3d_vec:add_prod(Pos0, N, T)
     end.
 
 %% Along Default Axis
@@ -2200,9 +2244,17 @@ event(redraw, #tw{w=W,h=H}=Tw) ->
     draw_tweak_palette(Tw),
     keep;
 event(update_palette, Tw0) ->
-    Tw = update_tweak_palette(Tw0),
+    #tw{menu=Menu,lh=Lh}=Tw = update_tweak_palette(Tw0),
+    Cw = ?CHAR_WIDTH,
+    N = length(Menu),
+    W = max_width(Menu, 0),
+    Height = Lh * N + 4,
+    Width = Cw * W + (Cw*2),
+    Size = {Width, Height},
+    Win = wings_wm:this(),
+    wings_wm:resize(Win, Size),
     wings_wm:dirty(),
-    get_event(Tw);
+    get_event(Tw#tw{h=Height, w=Width, n=N});
 event(close, _) ->
     delete;
 event(#mousemotion{x=X,y=Y}, Tw) ->
