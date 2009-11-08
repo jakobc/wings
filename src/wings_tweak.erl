@@ -1468,52 +1468,32 @@ tweak_menu_fun(Mode) ->
 
 constraints_menu() ->
     [Fx,Fy,Fz] = wings_pref:get_value(tweak_xyz),
-    F1 = case Fx of
-        true -> ?__(1,"X Axis is Locked");
-        false -> ?__(2,"Lock X")
-    end,
-    F2 = case Fy of
-        true -> ?__(3,"Y Axis is Locked");
-        false -> ?__(4,"Lock Y")
-    end,
-    F3 = case Fz of
-        true -> ?__(5,"Z Axis is Locked");
-        false -> ?__(6,"Lock Z")
-    end,
+    TwAx = wings_pref:get_value(tweak_axis),
 
-    LN = ?__(10,"Lock Normal"),
-    NL = ?__(11,"Normal is Locked"),
+    N = normal,
+    P = planar,
+    D = default,
+    PD = planar_default,
 
-    LP = ?__(12,"Lock Normal Plane"),
-    NP = ?__(13,"Normal Plane is Locked"),
-
-    DA = ?__(14,"Lock Default Axis"),
-    DL = ?__(15,"Default Axis is Locked"),
-
-    LD = ?__(16,"Lock Default Plane"),
-    DP = ?__(17,"Default Plane is Locked"),
-
-    {Normal,NPlane,Default,DPlane} = case wings_pref:get_value(tweak_axis) of
-      normal -> {NL,LP,DA,LD};
-      planar -> {LN,NP,DA,LD};
-      default -> {LN,LP,DL,LD};
-      planar_default -> {LN,LP,DA,DP};
-      _ -> {LN,LP,DA,LD} % screen
-    end,
-
-    Nhelp1 = ?__(18,"Lock Normal"),
-    Nhelp2 = ?__(19,"Lock Normal Plane"),
-    Dhelp1 = ?__(20,"Lock Default Axis"),
-    Dhelp2 = ?__(21,"Lock Default Plane"),
+    Nhelp1 = ?__(18,"Locks axis to the selection's Normal."),
+    Nhelp2 = ?__(19,"Locks movement to the selection normal's Radial."),
+    Dhelp1 = ?__(20,"Locks movement to the Default Axis."),
+    Dhelp2 = ?__(21,"Locks movement to the Radial of the Default Axis."),
 
     Help = ?__(7,"If assigned (via Insert), a hotkey can (un)lock this axis while tweaking."),
-    [{F1,x,Help}, {F2,y,Help}, {F3,z,Help}, separator,
+    [{wings_s:dir(x),x,Help,crossmark(Fx)},
+     {wings_s:dir(y),y,Help,crossmark(Fy)},
+     {wings_s:dir(z),z,Help,crossmark(Fz)},
+     separator,
      {?__(8,"XYZ Panel"),panel,?__(9,"Toggle xyz constraints")},
     separator,
-     {Normal,normal,wings_msg:join([Help,Nhelp1])},
-     {NPlane,planar,wings_msg:join([Help,Nhelp2])},
-     {Default,default,wings_msg:join([Help,Dhelp1])},
-     {DPlane,planar_default,wings_msg:join([Help,Dhelp2])},
+     {wings_s:dir(N), N, wings_msg:join([Nhelp1,Help]), crossmark(TwAx =:= N)},
+     {wings_s:dir({radial,N}), P,
+         wings_msg:join([Nhelp2,Help]), crossmark(TwAx =:= P)},
+     {wings_util:cap(wings_s:dir(default_axis)), D,
+         wings_msg:join([Dhelp1,Help]), crossmark(TwAx =:= D)},
+     {wings_util:cap(wings_s:dir({radial,default_axis})),planar_default,
+         wings_msg:join([Dhelp2,Help]), crossmark(TwAx =:= PD)},
     separator,
      {?__(22,"Clear Constraints"),clear,?__(23,"Clear all locked axes.")}].
 
@@ -1562,6 +1542,7 @@ cycle_magnet() ->
 crossmark({MagType, MagType}) -> [crossmark];
 crossmark({_, MagType}) when is_atom(MagType)-> [];
 crossmark("none") -> [];
+crossmark(false) -> [];
 crossmark(_) -> [crossmark].
 
 keys_combo(Key) ->
@@ -2306,22 +2287,22 @@ valid_menu_items([]) -> [].
 draw_tweak_palette(#tw{menu=Menu,lh=Lh}=Tw) ->
     draw_tweak_menu_items(Menu, Lh, Tw).
 
-draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, mode=Mode}=Tw) ->
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,Bound}|Menu], Y, #tw{lh=Lh, w=W, current=Mode, mode=Mode}=Tw) ->
     {R,G,B} = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:gradient_border(X1-1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_style(Bound,Name)),
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,_}|Menu], Y, #tw{lh=Lh, w=W, current=Mode}=Tw) ->
+draw_tweak_menu_items([{Name,{_,{Mode,_}},Help,Bound}|Menu], Y, #tw{lh=Lh, w=W, current=Mode}=Tw) ->
     Colour = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:set_color(wings_pref:get_value(menu_hilite)),
     wings_io:gradient_rect(X1-1, Y1, X2-X1+1, Y2-Y1, Colour),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_style(Bound,Name)),
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
@@ -2367,22 +2348,22 @@ draw_tweak_menu_items([{Name,_,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
 
-draw_tweak_menu_items([{Name,Cmd,Help,_}|Menu], Y, #tw{lh=Lh, w=W, current={_,{_,Cmd}}, mode={_,Cmd,_}}=Tw) ->
+draw_tweak_menu_items([{Name,Cmd,Help,Bound}|Menu], Y, #tw{lh=Lh, w=W, current={_,{_,Cmd}}, mode={_,Cmd,_}}=Tw) ->
     {R,G,B} = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:gradient_border(X1-1, Y1, X2-X1, Y2-Y1, {R*0.8,G*0.8,B*0.8}),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_style(Bound,Name)),
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,Cmd,Help,_}|Menu], Y, #tw{lh=Lh, w=W, current={_,{_,Cmd}}}=Tw) ->
+draw_tweak_menu_items([{Name,Cmd,Help,Bound}|Menu], Y, #tw{lh=Lh, w=W, current={_,{_,Cmd}}}=Tw) ->
     Colour = wings_pref:get_value(menu_hilite),
     {X1,Y1,X2,Y2} = {?CHAR_WIDTH - 1, Y + 1, W - ?CHAR_WIDTH + 1, Y-Lh+1},
     wings_io:set_color(wings_pref:get_value(menu_hilite)),
     wings_io:gradient_rect(X1-1, Y1, X2-X1+1, Y2-Y1, Colour),
     wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_style(Bound,Name)),
     Ly = Y + Lh,
     wings_wm:message(Help),
     draw_tweak_menu_items(Menu, Ly, Tw);
@@ -2415,9 +2396,9 @@ draw_tweak_menu_items([{Name,Cmd,_,_}|Menu], Y, #tw{lh=Lh, w=W, mode={_,Cmd,_}}=
     wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
-draw_tweak_menu_items([{Name,_,_,_}|Menu], Y, #tw{lh=Lh}=Tw) ->
+draw_tweak_menu_items([{Name,_,_,Bound}|Menu], Y, #tw{lh=Lh}=Tw) ->
     wings_io:set_color(wings_pref:get_value(menu_text)),
-    wings_io:text_at(?CHAR_WIDTH, Y - 2, Name),
+    wings_io:text_at(?CHAR_WIDTH, Y - 2, text_style(Bound,Name)),
     Ly = Y + Lh,
     draw_tweak_menu_items(Menu, Ly, Tw);
 
