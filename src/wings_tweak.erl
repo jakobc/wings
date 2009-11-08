@@ -59,13 +59,16 @@ init() ->
     set_default_tweak_prefs(wings_pref:get_value(camera_mode)),
     TweakMagnet = {true, dome, 1.0},  %{magnet on, magnet type, magnet radius}
     wings_pref:set_default(tweak_magnet, TweakMagnet),
-    wings_pref:delete_value(tweak_help),
     wings_pref:set_default(tweak_xyz, [false,false,false]),
+    wings_pref:set_default(tweak_axis,screen),
+    wings_pref:set_default(tweak_point,none),
     wings_pref:set_default(tweak_single_click,true),
     wings_pref:set_default(tweak_click_speed,200000),
     wings_pref:set_default(tweak_mag_adj_sensitivity,0.01),
-    wings_pref:set_default(tweak_axis,screen),
     wings_pref:set_default(tweak_sb_clears_constraints,true),
+
+    %% Delete Old Prefs
+    wings_pref:delete_value(tweak_help),
     set_tweak_pref(screen, 3, {false,false,false}),
     set_tweak_pref(normal, 3, {false,false,false}),
     set_tweak_pref(tangent, 3, {false,false,false}),
@@ -673,9 +676,13 @@ do_tweak(#dlo{drag={matrix,Pos0,Matrix0,_},src_we=#we{id=Id}}=D0,
     Matrix = e3d_mat:mul(e3d_mat:translate(Move), Matrix0),
     D0#dlo{drag={matrix,Pos,Matrix,e3d_mat:expand(Matrix)}};
 
-do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst == none
+do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst =:= none
           mag=Mag0,mm=MM}=Drag, src_we=#we{id=Id,mirror=Mir}}=D0,
           DX, DY, _DxOrg, _DyOrg, {scale, Type}) ->
+%% This is the forst time through for Scale ops.
+%% For default Scaling, figure out the axis of scaling by determining the 
+%% direction of the user's initial mouse motion. Save this PrimeVector to the
+%% pst field in the #drag record.
     Matrices = case Mir of
         none -> wings_u:get_matrices(Id, original);
         _ -> wings_u:get_matrices(Id, MM)
@@ -684,9 +691,9 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst == none
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
 
     {Dir,Pos} = case Type of
-        x -> {dir,{1.0,0.0,0.0}};
-        y -> {dir,{0.0,1.0,0.0}};
-        z -> {dir,{0.0,0.0,1.0}};
+        x -> {axis,{1.0,0.0,0.0}};
+        y -> {axis,{0.0,1.0,0.0}};
+        z -> {axis,{0.0,0.0,1.0}};
         xy -> {radial,{0.0,0.0,1.0}};
         yz -> {radial,{1.0,0.0,0.0}};
         zx -> {radial,{0.0,1.0,0.0}};
@@ -694,35 +701,51 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst == none
         normal -> {dir, sel_normal_0(Vs,TweakPos,D0)};
         default ->
             {_,Normal} = wings_pref:get_value(default_axis),
-            {dir,Normal};
+            {axis,Normal};
         planar_default ->
             {_,Normal} = wings_pref:get_value(default_axis),
             {radial,Normal};
-        _ -> {dir,TweakPos}
+        _ -> {user,TweakPos}  %% This is for Default Scaling
     end,
+    {_, XX, YY} = wings_io:get_mouse_state(), %% Mouse Position
+    {_, YY0} = wings_wm:win_size(wings_wm:this()), %% Window Size global
+    {MSX,MSY} = wings_wm:global2local(XX,YY), %% Global Size to Local
+    
+    %% Cursor Position according to the model coordinates
+    CursorPos = screen_to_obj(Matrices,{float(MSX), float(YY0 - MSY), Zs}),
 
     PrimeVec = if 
-        Dir =:= dir ->
-          {_, XX, YY} = wings_io:get_mouse_state(),
-          {_, YY0} = wings_wm:win_size(wings_wm:this()),
-          {MSX,MSY} = wings_wm:global2local(XX,YY),
-          MS = screen_to_obj(Matrices,{float(MSX), float(YY0 - MSY), Zs}),
-          V1 = e3d_vec:norm_sub(MS,Orig), %% vector from where the user starts drag to bbox sel center
-          V2 = e3d_vec:norm_sub(Orig,Pos), %% vector marking direction of scale
-          Dot = e3d_vec:dot(V1, V2),
+        Dir =:= user ->
+
+          %% vector from where the user starts drag to bbox sel center
+          V1 = e3d_vec:norm_sub(CursorPos,Orig),
+
+          %% scale axis
+          V2 = e3d_vec:norm_sub(Orig,Pos), 
+
           %% Flip scale vec depending on the direction
-          %% the user is dragging according to the center of the selection 
+          %% the user is dragging. To or From the selection center.
+          Dot = e3d_vec:dot(V1, V2),
           case  Dot < 0.0 of
             true -> e3d_vec:neg(V2);
             false -> V2
           end;
         true -> Pos
     end,
-    Pst = {Type,Dir,PrimeVec},
-    {Vtab,Mag} = case Dir of
-        dir -> tweak_scale(TweakPos, Orig, PrimeVec, Mag0);
-        radial -> tweak_scale_radial(TweakPos, Orig, PrimeVec, Mag0)
+    %% Check for active Point ops
+    VecData = case wings_pref:get_value(tweak_point) of
+       none -> {PrimeVec,Orig};
+       from_cursor -> {PrimeVec, CursorPos}
     end,
+
+    Dist = dist_along_vector(Orig, TweakPos, PrimeVec)/2,
+
+    {Vtab,Mag} = case Dir of
+        radial -> tweak_scale_radial(Dist, VecData, Mag0);
+        _ -> tweak_scale(Dist, VecData, Mag0)
+    end,
+
+    Pst = {Type,Dir,VecData},
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,pst=Pst,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 
@@ -735,10 +758,11 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst={Type,Dir,PrimeVec},
     end,
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
-
+    {PVec,_} = PrimeVec,
+    Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
     {Vtab,Mag} = case Dir of
-        dir -> tweak_scale(TweakPos, Orig, PrimeVec, Mag0);
-        radial -> tweak_scale_radial(TweakPos, Orig, PrimeVec, Mag0)
+        radial -> tweak_scale_radial(Dist, PrimeVec, Mag0);
+        _ -> tweak_scale(Dist, PrimeVec, Mag0)
     end,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
@@ -809,23 +833,21 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
 do_tweak(D, _, _, _, _, _) -> D.
 
 %%%% Scale
-tweak_scale(TweakPos, Orig, PVec, #mag{vs=Vs}=Mag) ->
-    Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
+tweak_scale(Dist, {PVec, Point}, #mag{vs=Vs}=Mag) ->
     Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
-                   D = dist_along_vector(Orig, Pos0, PVec),
+                   D = dist_along_vector(Point, Pos0, PVec),
                    Pos1 = e3d_vec:add_prod(Pos0, PVec, Inf*D*Dist),
                    Pos = mirror_constrain(Plane, Pos1),
                    [{V,Pos}|A]
            end, [], Vs),
     {Vtab,Mag#mag{vtab=Vtab}}.
 
-tweak_scale_radial(TweakPos, Orig, Norm, #mag{vs=Vs}=Mag) ->
-    Dist = dist_along_vector(Orig, TweakPos, Norm)/2,
+tweak_scale_radial(Dist, {Norm,Point}, #mag{vs=Vs}=Mag) ->
     Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
-                   V1 = e3d_vec:norm_sub(Orig, Pos0),
+                   V1 = e3d_vec:norm_sub(Point, Pos0),
                    V2 = e3d_vec:cross(V1,Norm),
                    Vec = e3d_vec:norm(e3d_vec:cross(V2,Norm)),
-                   D = dist_along_vector(Orig, Pos0, Vec),
+                   D = dist_along_vector(Point, Pos0, Vec),
                    Pos1 = e3d_vec:add_prod(Pos0, Vec, Inf*D*Dist),
                    Pos = mirror_constrain(Plane, Pos1),
                    [{V,Pos}|A]
@@ -1469,6 +1491,7 @@ tweak_menu_fun(Mode) ->
 constraints_menu() ->
     [Fx,Fy,Fz] = wings_pref:get_value(tweak_xyz),
     TwAx = wings_pref:get_value(tweak_axis),
+    TwPt = wings_pref:get_value(tweak_point),
 
     N = normal,
     P = planar,
@@ -1494,6 +1517,9 @@ constraints_menu() ->
          wings_msg:join([Dhelp1,Help]), crossmark(TwAx =:= D)},
      {wings_util:cap(wings_s:dir({radial,default_axis})),planar_default,
          wings_msg:join([Dhelp2,Help]), crossmark(TwAx =:= PD)},
+    separator,
+     {?__(24,"From Cursor"),from_cursor,?__(25,"Set point from which to Scale using the mouse cursor."),
+      crossmark(TwPt =:= from_cursor)},
     separator,
      {?__(22,"Clear Constraints"),clear,?__(23,"Clear all locked axes.")}].
 
@@ -2092,7 +2118,14 @@ modifier({Ctrl,Shift,Alt}) ->
 
 set_axis_lock(clear) ->
     wings_pref:set_value(tweak_xyz,[false,false,false]),
+    wings_pref:set_value(tweak_point,none),
     wings_pref:set_value(tweak_axis, screen);
+set_axis_lock(from_cursor=P) ->
+    Pref = case wings_pref:get_value(tweak_point) of
+      P -> none;
+      _ -> P
+    end,
+    wings_pref:set_value(tweak_point,Pref);
 set_axis_lock(Axis) when Axis =:= x; Axis =:= y; Axis =:= z->
     [X,Y,Z] = wings_pref:get_value(tweak_xyz),
     NewPref = case Axis of
