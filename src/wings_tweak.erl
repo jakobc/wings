@@ -705,6 +705,7 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst =:= none
         planar_default ->
             {_,Normal} = wings_pref:get_value(default_axis),
             {radial,Normal};
+        uniform -> {uniform, TweakPos};
         _ -> {user,TweakPos}  %% This is for Default Scaling
     end,
     {_, XX, YY} = wings_io:get_mouse_state(), %% Mouse Position
@@ -729,11 +730,12 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst =:= none
 
     PrimeVec = if 
         Dir =:= user -> PVec;
+        Dir =:= uniform -> PVec;
         true -> Pos
     end,
 
     %% Check for active Point ops
-    VecData = {_, VD} = case wings_pref:get_value(tweak_point) of
+    VecData = {_, AxisPoint} = case wings_pref:get_value(tweak_point) of
        none -> {PVec, {PrimeVec, Orig}};
        from_cursor -> {e3d_vec:neg(PVec), {PrimeVec, CursorPos}}
     end,
@@ -741,8 +743,9 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,pst=none,  %% pst =:= none
     Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
 
     {Vtab,Mag} = case Dir of
-        radial -> tweak_scale_radial(Dist, VD, Mag0);
-        _ -> tweak_scale(Dist, VD, Mag0)
+        radial -> tweak_scale_radial(Dist, AxisPoint, Mag0);
+        uniform -> tweak_scale_uniform(Dist, AxisPoint, Mag0);
+        _ -> tweak_scale(Dist, AxisPoint, Mag0)
     end,
 
     Pst = {Type,Dir,VecData},
@@ -758,11 +761,12 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst={Type,Dir,PrimeVec},
     end,
     {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
     TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
-    {PVec,VD} = PrimeVec,
+    {PVec,AxisPoint} = PrimeVec,
     Dist = dist_along_vector(Orig, TweakPos, PVec)/2,
     {Vtab,Mag} = case Dir of
-        radial -> tweak_scale_radial(Dist, VD, Mag0);
-        _ -> tweak_scale(Dist, VD, Mag0)
+        radial -> tweak_scale_radial(Dist, AxisPoint, Mag0);
+        uniform -> tweak_scale_uniform(Dist, AxisPoint, Mag0);
+        _ -> tweak_scale(Dist, AxisPoint, Mag0)
     end,
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
@@ -849,6 +853,16 @@ tweak_scale_radial(Dist, {Norm,Point}, #mag{vs=Vs}=Mag) ->
                    Vec = e3d_vec:norm(e3d_vec:cross(V2,Norm)),
                    D = dist_along_vector(Point, Pos0, Vec),
                    Pos1 = e3d_vec:add_prod(Pos0, Vec, Inf*D*Dist),
+                   Pos = mirror_constrain(Plane, Pos1),
+                   [{V,Pos}|A]
+           end, [], Vs),
+    {Vtab,Mag#mag{vtab=Vtab}}.
+
+tweak_scale_uniform(Dist, {PVec, Point}, #mag{vs=Vs}=Mag) ->
+    Vtab = lists:foldl(fun({V, Pos0, Plane, _, Inf}, A) ->
+                   D = dist_along_vector(Point, Pos0, PVec),
+                   Vec = e3d_vec:sub(Point, Pos0),
+                   Pos1 = e3d_vec:add_prod(Pos0, Vec, Inf*Dist),
                    Pos = mirror_constrain(Plane, Pos1),
                    [{V,Pos}|A]
            end, [], Vs),
@@ -1304,6 +1318,7 @@ is_tweak_combo(#tweak{st=#st{selmode=body}}=T) ->
       true ->
         wings_pref:set_value(tweak_xyz,[false,false,false]),
         wings_pref:set_value(tweak_axis,screen),
+        wings_pref:set_value(tweak_point,none),
         wings_wm:send(tweak_axis_palette, update_palette);
       false -> ok
     end,
@@ -1313,6 +1328,7 @@ is_tweak_combo(#tweak{mode=Mode, palette=Pal, st=St0}=T) ->
       true ->
         wings_pref:set_value(tweak_xyz,[false,false,false]),
         wings_pref:set_value(tweak_axis,screen),
+        wings_pref:set_value(tweak_point,none),
         wings_wm:send(tweak_axis_palette, update_palette);
       false -> ok
     end,
@@ -1497,11 +1513,13 @@ constraints_menu() ->
     P = planar,
     D = default,
     PD = planar_default,
+    U = uniform,
 
-    Nhelp1 = ?__(18,"Locks axis to the selection's Normal."),
-    Nhelp2 = ?__(19,"Locks movement to the selection normal's Radial."),
-    Dhelp1 = ?__(20,"Locks movement to the Default Axis."),
-    Dhelp2 = ?__(21,"Locks movement to the Radial of the Default Axis."),
+    NHelp = ?__(18,"Locks axis to the selection's Normal."),
+    RHelp = ?__(19,"Locks movement to the selection normal's Radial."),
+    DaHelp = ?__(20,"Locks movement to the Default Axis."),
+    DrHelp = ?__(21,"Locks movement to the Radial of the Default Axis."),
+    UHelp = ?__(26,"Movement is kept uniform in all directions"),
 
     Help = ?__(7,"If assigned (via Insert), a hotkey can (un)lock this axis while tweaking."),
     [{wings_s:dir(x),x,Help,crossmark(Fx)},
@@ -1510,13 +1528,14 @@ constraints_menu() ->
      separator,
      {?__(8,"XYZ Panel"),panel,?__(9,"Toggle xyz constraints")},
     separator,
-     {wings_s:dir(N), N, wings_msg:join([Nhelp1,Help]), crossmark(TwAx =:= N)},
+     {wings_s:dir(N), N, wings_msg:join([NHelp,Help]), crossmark(TwAx =:= N)},
      {wings_s:dir({radial,N}), P,
-         wings_msg:join([Nhelp2,Help]), crossmark(TwAx =:= P)},
+         wings_msg:join([RHelp,Help]), crossmark(TwAx =:= P)},
      {wings_util:cap(wings_s:dir(default_axis)), D,
-         wings_msg:join([Dhelp1,Help]), crossmark(TwAx =:= D)},
+         wings_msg:join([DaHelp,Help]), crossmark(TwAx =:= D)},
      {wings_util:cap(wings_s:dir({radial,default_axis})),planar_default,
-         wings_msg:join([Dhelp2,Help]), crossmark(TwAx =:= PD)},
+         wings_msg:join([DrHelp,Help]), crossmark(TwAx =:= PD)},
+     {wings_s:dir(uniform), U, UHelp, crossmark(TwAx =:= U)},
     separator,
      {?__(24,"From Cursor"),from_cursor,?__(25,"Set point from which to Scale using the mouse cursor."),
       crossmark(TwPt =:= from_cursor)},
