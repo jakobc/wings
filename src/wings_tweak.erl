@@ -216,6 +216,9 @@ handle_tweak_drag_event(redraw, #tweak{mode=Mode,st=St}=T) ->
     tweak_drag_no_redraw(T);
 
 % Tweak Modes that can be modified by xyz constraints
+handle_tweak_drag_event(#mousemotion{}=Ev, #tweak{mode={TwkMode,_}}=T0) ->
+    handle_tweak_drag_event(Ev, T0#tweak{mode=TwkMode});
+
 handle_tweak_drag_event(#mousemotion{x=X, y=Y},
             #tweak{mode=TwkMode, cx=CX, cy=CY, ox=OX, oy=OY}=T0)
             when TwkMode =:= move; TwkMode =:= scale ->
@@ -224,16 +227,13 @@ handle_tweak_drag_event(#mousemotion{x=X, y=Y},
     DY = GY-OY, %since last move Y
     DxOrg = DX+CX, %total X
     DyOrg = DY+CY, %total Y
-    Mode = case constraints(TwkMode) of
-      no_xyz -> other_constraint_dir(TwkMode);
-      Other -> Other
-    end,
+    Mode = get_tweak_mode_with_constraints(TwkMode),
     wings_io:warp(OX,OY),
     do_tweak_0(DX,DY,DxOrg,DyOrg,Mode),
-    T = T0#tweak{cx=DxOrg,cy=DyOrg},
+    T = T0#tweak{mode=Mode,cx=DxOrg,cy=DyOrg},
     update_tweak_handler(T);
 
-% Tweak Modes without allowable xyz constraints
+% Tweak Modes without allowable xyz constraints or constraints are defined
 handle_tweak_drag_event(#mousemotion{x=X, y=Y},
             #tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
     {GX,GY} = wings_wm:local2global(X, Y),
@@ -266,6 +266,7 @@ handle_tweak_drag_event(#keyboard{sym=$\s}=Ev, #tweak{magnet=Mag,st=St}=T0) ->
 handle_tweak_drag_event(Ev,#tweak{st=#st{selmode=body}}=T) ->
     handle_tweak_drag_event_1(Ev,T);
 
+%% catch tweak magnet hotkeys
 handle_tweak_drag_event(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     Hotkeys = wings_hotkey:matching([tweak_magnet,tweak]),
     case lists:keymember(mag_adjust,1,Hotkeys) of
@@ -316,7 +317,7 @@ tweak_drag_mag_adjust(#tweak{mode=Mode, cx=CX, cy=CY, ox=OX, oy=OY}=T0) ->
 handle_tweak_drag_event_1(#keyboard{}=Ev, #tweak{magnet=Mag,st=St}=T) ->
     case wings_hotkey:event(Ev,St#st{sel=[]}) of
       next ->
-          update_tweak_handler(is_tweak_combo(T));
+         update_tweak_handler(is_tweak_combo(T));
       {tweak,{tweak_magnet,mag_adjust}}=Cmd ->
       %% Shouldn't get to here but just to be safe
         if Mag ->
@@ -771,8 +772,9 @@ do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,pst={Type,Dir,PrimeVec},
     D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
 
-do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
-          src_we=#we{id=Id,mirror=Mir}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode) ->
+do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,mag=Mag0,mm=MM}=Drag,
+          src_we=#we{id=Id,mirror=Mir}}=D0, DX, DY, _DxOrg, _DyOrg,
+          {move,_}=Mode) ->
     Matrices = case Mir of
         none -> wings_u:get_matrices(Id, original);
         _ -> wings_u:get_matrices(Id, MM)
@@ -783,6 +785,9 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
     {Px,Py,Pz} = Pos0,
     {Vtab,Mag} =
     case Mode of
+        {move,screen} ->
+            Pos = TweakPos,
+            magnet_tweak(Mag0, Pos);
         {move,x} ->
             Pos = {Tx,Py,Pz},
             magnet_tweak(Mag0, Pos);
@@ -814,8 +819,24 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
         {move,default_planar} ->
             Pos = tweak_default_tangent(Pos0, TweakPos),
             magnet_tweak(Mag0, Pos);
-        relax ->
+        {move,_} ->
             Pos = TweakPos,
+            magnet_tweak(Mag0, Pos)
+    end,
+    D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,pst=none,mag=Mag}},
+    wings_draw:update_dynamic(D, Vtab);
+do_tweak(#dlo{drag=#drag{pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
+          src_we=#we{id=Id,mirror=Mir}=We}=D0, DX, DY, DxOrg, _DyOrg, Mode)
+          when Mode =:= relax; Mode =:= slide; Mode =:= slide_collapse ->
+    Matrices = case Mir of
+        none -> wings_u:get_matrices(Id, original);
+        _ -> wings_u:get_matrices(Id, MM)
+    end,
+    {Xs,Ys,Zs} = obj_to_screen(Matrices, Pos0),
+    TweakPos = screen_to_obj(Matrices, {Xs+DX,Ys-DY,Zs}),
+    {Vtab,Mag} =
+    case Mode of
+        relax ->
             Len = abs(DxOrg) / 600.0,
             Len1 = case Len > 1 of
                  true -> 1.0;
@@ -823,17 +844,14 @@ do_tweak(#dlo{drag=#drag{vs=Vs,pos=Pos0,pos0=Orig,mag=Mag0,mm=MM}=Drag,
             end,
             relax_magnet_tweak_fn(Mag0, We, Len1);
         slide ->
-            Pos = TweakPos,
             magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
         slide_collapse ->
-            Pos = TweakPos,
-            magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos);
-        _ 	->
-            Pos = TweakPos,
-            magnet_tweak(Mag0, Pos)
+            magnet_tweak_slide_fn(Mag0, We, Orig, TweakPos)
     end,
-    D = D0#dlo{sel=none,drag=Drag#drag{pos=Pos,pst=none,mag=Mag}},
+    D = D0#dlo{sel=none,drag=Drag#drag{pos=TweakPos,pst=none,mag=Mag}},
     wings_draw:update_dynamic(D, Vtab);
+do_tweak(#dlo{drag=#drag{}=Drag}=D, _, _, _, _, _) ->
+    D#dlo{drag=Drag#drag{pst=none}};
 do_tweak(D, _, _, _, _, _) -> D.
 
 %%%% Scale
@@ -1254,13 +1272,17 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 %%%
 %%%% Hotkey and Combo Checking
 %%%
-is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet}=T0) ->
+is_tweak_hotkey({tweak, Cmd}, #tweak{cam=Cam,magnet=Magnet,st=St0}=T0) ->
     case Cmd of
       {axis_constraint, panel} -> T0;
       {axis_constraint, Axis} ->
           set_axis_lock(Axis),
           wings_wm:send(tweak_axis_palette, update_palette),
-          T0;
+          St = wings_dl:map(fun (D, _) ->
+                      update_drag(D, T0)  % used to find mid tweak model data
+                      end, St0),
+          do_tweak_0(0.0, 0.0, 0.0, 0.0, {move,screen}),
+          T0#tweak{st=St};
       {tweak_magnet, toggle_magnet} ->
           magnet_toggle(),
           {Mag, MagType, _} = wings_pref:get_value(tweak_magnet),
@@ -1359,6 +1381,14 @@ update_drag(#dlo{src_sel={Mode,Els},src_we=#we{id=Id},drag=#drag{mm=MM}}=D0,
 update_drag(D,#tweak{st=St}) -> {D,St}.
 
 %%%% XYZ Tweak Constraints
+get_tweak_mode_with_constraints({TwkMode,_}) ->
+    get_tweak_mode_with_constraints(TwkMode);
+get_tweak_mode_with_constraints(TwkMode) ->
+    case constraints(TwkMode) of
+      no_xyz -> other_constraint_dir(TwkMode);
+      Other -> Other
+    end.
+
 constraints(Mode) -> %% Mode =:= move; Mode =:= scale
     FKeys = fkey_combo(), % held xyz constraints
     TKeys = wings_pref:get_value(tweak_xyz), % Toggled xyz constraints
@@ -1490,12 +1520,14 @@ menu() ->
         ?__(16,"Information on using Tweak")}],
     Menu.
 
+mode({move,_}) -> ?__(1,"Move");
+mode({scale,_}) -> ?__(7,"Scale");
 mode(move) -> ?__(1,"Move");
+mode(scale) -> ?__(7,"Scale");
 mode(relax) -> ?__(3,"Relax");
 mode(slide) -> ?__(4,"Slide");
 mode(slide_collapse) -> ?__(5,"Slide Collapse");
-mode(select) -> ?__(6,"Paint Select");
-mode(scale) -> ?__(7,"Scale").
+mode(select) -> ?__(6,"Paint Select").
 
 tweak_menu_fun(Mode) ->
     fun
@@ -2101,6 +2133,7 @@ update_scroller(Knob,Lines) ->
 %%
 
 %% XYZ Constraints info line
+mode_message_1({Mode,_}) -> mode_message_1(Mode);
 mode_message_1(Mode) when Mode =:= move; Mode =:= scale ->
     Help1 = ?__(1,"Hold to Constrain XYZ"),
     Help2 = ?__(2,"Bold Fkeys are Locked (see Tweak menu)."),
