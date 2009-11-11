@@ -76,7 +76,7 @@ init() ->
 
 menu({tools}, Menu0) ->
     Menu0 ++ [separator,
-          {?__(1,"Tweak"), tweak,
+          {?__(21,"Old Tweak"), tweak,
            ?__(4,"Mode for adjusting geometry quickly.") ++" "++
            [{bold,?__(3,"Evoking command toggles Tweak mode On/Off.")}],
            [option]}];
@@ -117,7 +117,7 @@ tweak(Ask,maya,_St) when is_atom(Ask) ->
        ]}],
 
     PrefQs = [{Lbl,make_query(Ps)} || {Lbl,Ps} <- TweakPrefs],
-    wings_ask:dialog(Ask, ?__(4,"Tweak Mode Preferences"),PrefQs,
+    wings_ask:dialog(Ask, ?__(24,"Old Tweak Mode Preferences"),PrefQs,
     fun(Result) -> set_values(Result), {tools,{tweak,Result}} end);
 
 tweak(Ask,_Cam,_St) when is_atom(Ask) ->
@@ -144,7 +144,7 @@ tweak(Ask,_Cam,_St) when is_atom(Ask) ->
        ]}],
 
     PrefQs = [{Lbl,make_query(Ps)} || {Lbl,Ps} <- TweakPrefs],
-    wings_ask:dialog(Ask, ?__(4,"Tweak Mode Preferences"),PrefQs,
+    wings_ask:dialog(Ask, ?__(24,"Old Tweak Mode Preferences"),PrefQs,
     fun(Result) -> set_values(Result), {tools,{tweak,Result}} end);
 
 tweak(_,_,St) ->
@@ -218,6 +218,7 @@ fkey_combo() ->
 update_tweak_handler(#tweak{tmode=drag}=T) ->
     wings_draw:update_sel_dlist(),
     wings_wm:dirty(),
+    old_tweak_msg(),
     {replace,fun(Ev) ->
         handle_tweak_event(Ev, T)end};
 
@@ -231,16 +232,20 @@ update_tweak_handler(#tweak{st=#st{}=St}=T) ->
 
 handle_tweak_event(redraw, #tweak{tmode=drag,magnet=true,st=St}=T) ->
     help(T),
+    old_tweak_msg(),
     redraw(St),
     draw_magnet(T),
     keep;
 
 handle_tweak_event(redraw, #tweak{st=St}=T) ->
     help(T),
+    old_tweak_msg(),
     redraw(St),
     keep;
 
-
+handle_tweak_event(got_focus, _) ->
+    wings_wm:dirty(),
+    keep;
 handle_tweak_event({vec_command,Command,_}, T) when is_function(Command) ->
     %% Use to execute command with vector arguments (see wings_vec.erl).
     process_cmd_response(Command(),T);
@@ -805,8 +810,8 @@ sel_to_vs(face, Fs, We) -> wings_face:to_vertices(Fs, We).
 
 do_tweak(DX, DY, DxOrg, DyOrg, Mode) ->
     wings_dl:map(fun
-        (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
-             do_tweak(D, DX, DY, DxOrg, DyOrg, screen);
+      %  (#dlo{src_we=We}=D, _) when ?IS_LIGHT(We) ->
+      %       do_tweak(D, DX, DY, DxOrg, DyOrg, screen);
         (D, _) ->
              do_tweak(D, DX, DY, DxOrg, DyOrg, Mode)
          end, []).
@@ -1463,3 +1468,16 @@ show_cursor(OX,OY,CX,CY) ->
         end,
     wings_wm:release_focus(),
     wings_io:ungrab(X,Y).
+
+old_tweak_msg() ->
+    {W,H} = wings_wm:win_size(),
+    T = ?__(1,"Old Tweak Mode"),
+    Width = (length(T) * ?CHAR_WIDTH) + 4,
+    wings_io:ortho_setup(),
+    C = wings_pref:get_value(menu_hilite),
+    X = W - Width,
+    Y = H - ?LINE_HEIGHT,
+    wings_io:gradient_border(X - 4, Y - ?LINE_HEIGHT, X, Y - (?LINE_HEIGHT*2), C),
+    wings_io:set_color(wings_pref:get_value(menu_hilited_text)),
+    wings_io:text_at(X, Y, T).
+

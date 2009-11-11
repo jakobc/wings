@@ -294,16 +294,8 @@ area_info(Face, We) ->
 %% Marquee picking.
 %%
 clear_hilite_marquee_mode(#marquee{st=St}=Pick) ->
-    Ctrl = wings_s:key(ctrl),
-    Shift = wings_s:key(shift),
-    CtrlMsg = ?__(ctrl_action,"Deselect"),
-    ShiftMsg = ?__(shift_action,
-		   "(De)select only elements wholly inside marquee"),
-    Mctrl = wings_util:key_format(Ctrl, CtrlMsg),
-    Mshift = wings_util:key_format(Shift, ShiftMsg),
-    Message = wings_msg:join(Mctrl, Mshift),
-    wings_wm:message(Message),
-    wings_wm:dirty_mode(front),
+    marquee_message(),
+    wings_wm:dirty(),
     {seq,push,
      fun(redraw) ->
 	     wings:redraw(St),
@@ -319,6 +311,17 @@ clear_hilite_marquee_mode(#marquee{st=St}=Pick) ->
 	     wings_io:putback_event(Ev),
 	     keep
      end}.
+
+marquee_message() ->
+    Ctrl = wings_s:key(ctrl),
+    Shift = wings_s:key(shift),
+    CtrlMsg = ?__(ctrl_action,"Deselect"),
+    ShiftMsg = ?__(shift_action,
+		   "(De)select only elements wholly inside marquee"),
+    Mctrl = wings_util:key_format(Ctrl, CtrlMsg),
+    Mshift = wings_util:key_format(Shift, ShiftMsg),
+    Message = wings_msg:join(Mctrl, Mshift),
+    wings_wm:message(Message).
 
 get_marquee_event(Pick) ->
     {replace,fun(Ev) -> marquee_event(Ev, Pick) end}.

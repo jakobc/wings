@@ -13,7 +13,7 @@
 
 -module(wings_hotkey).
 -export([event/1,event/2,matching/1,bind_unicode/3,bind_virtual/4,
-	 bind_from_event/2,unbind/1,hotkeys_by_commands/1,
+	 bind_from_event/2,unbind/1,hotkeys_by_commands/1,bindkey/2,
 	 set_default/0,listing/0,handle_error/2]).
 
 -define(NEED_ESDL, 1).
